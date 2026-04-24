@@ -1,0 +1,2 @@
+# This file ensures the backups directory is tracked by git
+# The directory will contain automatic backups (.sql, .tar.gz, .bak files)
