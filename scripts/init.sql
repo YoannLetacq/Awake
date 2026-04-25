@@ -33,6 +33,10 @@ CREATE INDEX IF NOT EXISTS idx_created_at ON rss_articles(created_at);
 CREATE INDEX IF NOT EXISTS idx_source_sent_at ON rss_articles(source, sent_at);
 CREATE INDEX IF NOT EXISTS idx_category_published ON rss_articles(category, published_at DESC);
 
+-- Partial index for the recent-sent_at hot path (article_stats view)
+CREATE INDEX IF NOT EXISTS idx_sent_at_recent
+    ON rss_articles(sent_at) WHERE sent_at IS NOT NULL;
+
 -- Fonction pour mettre à jour updated_at automatiquement
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -82,8 +86,7 @@ DECLARE
     rows_deleted BIGINT;
 BEGIN
     DELETE FROM rss_articles
-    WHERE sent_at < NOW() - INTERVAL '90 days'
-    AND sent_at IS NOT NULL;
+    WHERE COALESCE(sent_at, created_at) < NOW() - INTERVAL '90 days';
 
     GET DIAGNOSTICS rows_deleted = ROW_COUNT;
     RETURN QUERY SELECT rows_deleted;
@@ -122,7 +125,7 @@ BEGIN
     RETURN QUERY
     SELECT u.val as url
     FROM unnest(urls_to_check) u(val)
-    WHERE u.val NOT IN (SELECT a.url FROM rss_articles a);
+    WHERE NOT EXISTS (SELECT 1 FROM rss_articles a WHERE a.url = u.val);
 END;
 $$ LANGUAGE plpgsql;
 

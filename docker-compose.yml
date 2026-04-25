@@ -15,7 +15,7 @@ services:
       - ./data/postgres:/var/lib/postgresql/data
       - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports:
-      - "${POSTGRES_PORT:-5433}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -55,6 +55,7 @@ services:
       - DISCORD_WEBHOOK_REDDIT=${DISCORD_WEBHOOK_REDDIT}
       - DISCORD_WEBHOOK_OTHERS=${DISCORD_WEBHOOK_OTHERS}
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - DISCORD_ALLOWED_AUTHORS=${DISCORD_ALLOWED_AUTHORS:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-pro}
       - N8N_PAYLOAD_SIZE_MAX=16
@@ -66,14 +67,14 @@ services:
       - N8N_RUNNERS_MODE=internal
       - TZ=${TZ:-Europe/Paris}
       - GENERIC_TIMEZONE=${TZ:-Europe/Paris}
+      # Code nodes need $env access (Authorize Mention, Sort Split & Limit).
+      # N8N_ENV_VARS whitelist below restricts which vars are exposed.
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
-      - N8N_COMMUNITY_PACKAGES_ENABLED=true
-      - NODE_FUNCTION_ALLOW_BUILTIN=fs
       - N8N_API_KEY=${N8N_API_KEY}
       - N8N_RESTRICT_FILE_ACCESS_TO=/home/node/rss_sources.json
-      - N8N_ENV_VARS=DISCORD_WEBHOOK_URL,DISCORD_WEBHOOK_TECH_NEWS,DISCORD_WEBHOOK_COMPANIES,DISCORD_WEBHOOK_REDDIT,DISCORD_WEBHOOK_OTHERS,DISCORD_BOT_TOKEN,GEMINI_API_KEY,GEMINI_MODEL,POSTGRES_USER,POSTGRES_PASSWORD,POSTGRES_DB,WEBHOOK_URL,N8N_API_KEY
+      - N8N_ENV_VARS=DISCORD_WEBHOOK_URL,DISCORD_WEBHOOK_TECH_NEWS,DISCORD_WEBHOOK_COMPANIES,DISCORD_WEBHOOK_REDDIT,DISCORD_WEBHOOK_OTHERS,DISCORD_BOT_TOKEN,DISCORD_ALLOWED_AUTHORS,GEMINI_API_KEY,GEMINI_MODEL,POSTGRES_USER,POSTGRES_PASSWORD,POSTGRES_DB,WEBHOOK_URL,N8N_API_KEY
     ports:
-      - "${N8N_PORT:-5678}:5678"
+      - "127.0.0.1:${N8N_PORT:-5678}:5678"
     volumes:
       - ./data/n8n:/home/node/.n8n
       - ./rss_sources.json:/home/node/rss_sources.json:ro
@@ -101,7 +102,7 @@ services:
       CACHE_EXPIRE: ${RSSHUB_CACHE_EXPIRE:-300}
       TZ: ${TZ:-Europe/Paris}
     ports:
-      - "1200:1200"
+      - "127.0.0.1:1200:1200"
     logging:
       driver: "json-file"
       options:
@@ -144,8 +145,6 @@ services:
     restart: unless-stopped
     environment:
       REDIS_HOST: redis
-    ports:
-      - "7379:7379"
     depends_on:
       redis:
         condition: service_healthy
@@ -199,7 +198,3 @@ services:
 networks:
   veille-network:
     driver: bridge
-
-volumes:
-  postgres_data:
-  n8n_data:
