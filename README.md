@@ -1,283 +1,162 @@
-# 🤖 Système de Veille IA Automatique
+# Veille IA
 
-Système de veille technologique automatisé pour l'Intelligence Artificielle, utilisant n8n, PostgreSQL et Discord.
+A self-hosted AI/ML news monitoring pipeline. Triggered on demand by an `@mention` of a Discord bot, the pipeline collects RSS feeds, deduplicates against PostgreSQL, scores and summarises articles with Gemini, and posts grouped embeds to up to four Discord webhooks.
 
-## 🌟 Caractéristiques
-
-- ✅ **25+ sources RSS** centralisées dans `rss_sources.json` (TechCrunch, Hacker News, GitHub, OpenAI, Anthropic, Reddit...)
-- ✅ **Déduplication intelligente** avec stockage PostgreSQL (90 jours)
-- ✅ **Catégorisation automatique** (🧠 LLM, 🤖 Agents, 🎨 Vision, 💻 Coding...)
-- ✅ **Filtrage + résumé par IA Gemini** (score de pertinence, confiance, résumé, takeaway)
-- ✅ **Déclenchement par mention Discord Bot** + lock Redis anti-spam
-- ✅ **4 webhooks Discord** (Tech News / Companies / Reddit / Others)
-- ✅ **100% Open Source** et self-hostable
-- ✅ **Backups automatiques** quotidiens
-- ✅ **Monitoring** et logs intégrés
-
-## 📋 Prérequis
-
-- **VPS ou serveur local** avec :
-  - Ubuntu 20.04+ / Debian 11+ (ou équivalent)
-  - 2GB RAM minimum (4GB recommandé)
-  - 20GB d'espace disque
-  - Docker et Docker Compose
-- **Serveur Discord** avec droits administrateur
-- **Webhook Discord** configuré
-
-## 🚀 Installation Rapide
-
-```bash
-# 1. Cloner le projet
-git clone https://github.com/votre-username/veille-ia.git
-cd veille-ia
-
-# 2. Lancer le setup automatique
-./scripts/setup.sh
-
-# 3. Éditer le fichier .env et ajouter votre DISCORD_WEBHOOK_URL
-nano .env
-
-# 4. Démarrer le système
-./scripts/start.sh
-
-# 5. Accéder à n8n
-# URL: http://localhost:5678
-# User: admin
-# Pass: (affiché par le script setup)
-```
-
-## 📁 Structure du Projet
+## Architecture
 
 ```
-veille-ia/
-├── docker-compose.yml      # Orchestration des services
-├── env.template            # Template de configuration
-├── .env                    # Configuration (à créer)
-├── rss_sources.json        # Liste complète des sources RSS (single source of truth)
-├── workflow-simplified.json # Workflow n8n courant (25 nodes)
-├── old.json                # Ancien workflow (61 nodes) conservé pour référence
+Discord @mention
+    -> n8n workflow (single execution, Redis-locked)
+        -> Load rss_sources.json
+        -> Read 25+ RSS feeds (parallel)
+        -> Date filter (2 days), categorize, dedup against PostgreSQL
+        -> Gemini call (relevance + summary in one round-trip)
+        -> Group by source_type, top-N per group
+        -> Format Discord embeds, POST to per-group webhooks
+        -> UPDATE rss_articles.sent_at = NOW()
+        -> Release lock
+```
+
+The lock uses Redis (via Webdis) with the n8n `$execution.id` as a fencing token; release is a Lua compare-and-delete so a stale execution cannot wipe a newer lock. Lock TTL is 15 minutes.
+
+Articles are inserted only after passing the Gemini relevance gate (`confidence >= 85`). `sent_at` is set after the Discord POST succeeds, so the database can distinguish queued, evaluated, and actually-sent rows.
+
+## Components
+
+| Service   | Image                      | Purpose                                            | Host port      |
+|-----------|----------------------------|----------------------------------------------------|----------------|
+| postgres  | `postgres:16-alpine`       | Article store, dedup, stats, retention             | `127.0.0.1:5433` |
+| n8n       | `n8nio/n8n:latest`         | Workflow runtime                                   | `127.0.0.1:5678` |
+| rsshub    | `diygod/rsshub:latest`     | Custom RSS feed generator (optional)               | `127.0.0.1:1200` |
+| redis     | `redis:7-alpine`           | Lock backend (no auth, internal network only)      | internal       |
+| webdis    | `nicolas/webdis:latest`    | HTTP wrapper around Redis (used by n8n HTTP nodes) | internal       |
+
+All published ports bind to `127.0.0.1`. To expose any service to the network, put it behind a reverse proxy with TLS and authentication.
+
+## Repository layout
+
+```
+.
+├── docker-compose.yml          # Service orchestration
+├── env.template                # Configuration template
+├── rss_sources.json            # RSS sources (single source of truth)
+├── workflow-simplified.json    # Current n8n workflow
 ├── scripts/
-│   ├── setup.sh            # Installation initiale
-│   ├── start.sh            # Démarrer le système
-│   ├── stop.sh             # Arrêter le système
-│   ├── restart.sh          # Redémarrer
-│   ├── status.sh           # Vérifier le statut
-│   ├── logs.sh             # Consulter les logs
-│   ├── backup.sh           # Backup manuel
-│   ├── restore.sh          # Restaurer backup
-│   └── init.sql            # Schéma PostgreSQL
-├── data/                   # Données persistantes
-│   ├── postgres/           # Base de données
-│   └── n8n/                # Workflows n8n
-├── backups/                # Backups automatiques
-├── logs/                   # Fichiers de logs
+│   ├── setup.sh                # First-run setup (.env + dirs)
+│   ├── start.sh, stop.sh, restart.sh, status.sh, logs.sh
+│   ├── backup.sh, restore.sh
+│   └── init.sql                # PostgreSQL schema, functions, indexes
+├── data/                       # Persistent volumes (gitignored)
 └── docs/
-    ├── INSTALL.md          # Guide installation détaillé
-    ├── MAINTENANCE.md      # Guide de maintenance
-    └── TROUBLESHOOTING.md  # Résolution de problèmes
+    ├── INSTALL.md
+    ├── MAINTENANCE.md
+    └── TROUBLESHOOTING.md
 ```
 
-## 🔧 Configuration
+## Requirements
 
-### Webhook Discord
+- Linux host (tested on Ubuntu 22.04 / Debian 12, WSL2)
+- Docker 24+ and Docker Compose v2
+- 2 GB RAM minimum, 4 GB recommended
+- A Discord bot token with the `MESSAGE CONTENT` intent
+- Up to four Discord webhook URLs (one per category)
+- A Gemini API key (https://aistudio.google.com/apikey)
 
-1. Sur Discord, aller dans **Paramètres du salon** → **Intégrations** → **Webhooks**
-2. Cliquer sur **Nouveau Webhook**
-3. Nommer le webhook "Veille IA"
-4. Copier l'URL du webhook
-5. Ajouter dans `.env` :
+## Setup
+
 ```bash
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/YOUR_ID/YOUR_TOKEN
+git clone <repo-url> veille-ia
+cd veille-ia
+chmod +x scripts/*.sh
+./scripts/setup.sh
 ```
 
-### Sources RSS
-
-Le fichier `rss_sources.json` contient toutes les sources disponibles. Pour activer/désactiver une source, modifier le champ `"active"`.
-
-Catégories disponibles :
-- **Tech News** : TechCrunch, Hacker News
-- **AI Companies** : OpenAI, Anthropic, Microsoft, Hugging Face
-- **AI Research** : ArXiv, Papers With Code, DeepMind
-- **Experts & Analysis** : Gary Marcus, Simon Willison
-- **Reddit Communities** : r/MachineLearning, r/OpenAI, r/Anthropic...
-
-## 📊 Utilisation
-
-### Importer le Workflow n8n
-
-Le fichier `workflow-simplified.json` contient le workflow courant (25 nodes, enrichi Gemini) prêt à l'emploi :
-1. Dans n8n : **+ → ⋯ → Import from File**
-2. Sélectionnez `workflow-simplified.json`
-3. Configurez les credentials PostgreSQL et Discord
-4. Activez le workflow !
-
-> `old.json` est l'ancienne version (61 nodes, 11 feeds hardcodés) conservée à titre de référence.
-
-### Commandes Principales
+`setup.sh` generates `.env` from `env.template` and writes random passwords for PostgreSQL and the n8n encryption key. Edit `.env` and fill in the Discord and Gemini values, then start the stack:
 
 ```bash
-# Démarrer le système
 ./scripts/start.sh
-
-# Voir le statut et les statistiques
-./scripts/status.sh
-
-# Consulter les logs en temps réel
-./scripts/logs.sh n8n        # Logs n8n
-./scripts/logs.sh postgres   # Logs PostgreSQL
-./scripts/logs.sh rsshub     # Logs RSSHub
-./scripts/logs.sh all        # Tous les logs
-
-# Faire un backup
-./scripts/backup.sh
-
-# Redémarrer
-./scripts/restart.sh
-
-# Arrêter
-./scripts/stop.sh
-```
-
-### Interface n8n
-
-Accéder à : `http://VOTRE_IP:5678`
-
-**Workflows inclus :**
-1. **Veille IA Master** : Collecte et envoi des articles (toutes les 2h)
-2. **Purge Articles** : Nettoyage automatique > 90 jours (quotidien à 3h)
-
-## 🔐 Sécurité
-
-- ✅ Tous les mots de passe générés automatiquement (32+ caractères)
-- ✅ Authentification Basic Auth sur n8n
-- ✅ Base de données PostgreSQL isolée
-- ✅ Fichier `.env` exclu du git
-- ✅ Logs avec rotation automatique
-
-### Recommandations Production
-
-```bash
-# Configurer un firewall
-sudo ufw enable
-sudo ufw allow 22/tcp    # SSH
-sudo ufw allow 5678/tcp  # n8n (ou via reverse proxy uniquement)
-
-# Mettre en place un reverse proxy (Traefik/Nginx) avec SSL
-```
-
-## 📈 Monitoring
-
-### Statistiques en Temps Réel
-
-```bash
 ./scripts/status.sh
 ```
 
-Affiche :
-- État des containers
-- Nombre d'articles total/envoyés
-- Articles des dernières 24h/7 jours
-- Nombre de sources/catégories
-- Utilisation disque
+Open n8n at <http://localhost:5678>, create the owner account, then import `workflow-simplified.json`. Wire the Postgres credential and the Discord Bot Trigger credential. See [QUICKSTART.md](QUICKSTART.md) for the full first-run procedure.
 
-### Dashboard PostgreSQL
+## Configuration
+
+All runtime settings live in `.env`. Key variables:
+
+| Variable                       | Required | Notes |
+|--------------------------------|----------|-------|
+| `POSTGRES_PASSWORD`            | yes      | Auto-generated by `setup.sh`. |
+| `N8N_ENCRYPTION_KEY`           | yes      | Auto-generated. Do not rotate without re-encrypting credentials. |
+| `DISCORD_BOT_TOKEN`            | yes      | From the Discord developer portal. |
+| `DISCORD_WEBHOOK_TECH_NEWS`    | yes      | Per-category webhook. |
+| `DISCORD_WEBHOOK_COMPANIES`    | yes      | |
+| `DISCORD_WEBHOOK_REDDIT`       | yes      | |
+| `DISCORD_WEBHOOK_OTHERS`       | yes      | |
+| `DISCORD_ALLOWED_AUTHORS`      | no       | Comma-separated user IDs allowed to trigger. Empty = anyone in the configured channels. |
+| `GEMINI_API_KEY`               | yes      | |
+| `GEMINI_MODEL`                 | no       | Defaults to `gemini-pro`. `gemini-2.0-flash` is a good cost/latency trade-off. |
+| `POSTGRES_PORT`                | no       | Host-side port. Defaults to `5433` to avoid colliding with a local Postgres. |
+| `TZ`                           | no       | Defaults to `Europe/Paris`. |
+
+The list of n8n-visible env vars is whitelisted via `N8N_ENV_VARS` in `docker-compose.yml`. Add new variables there as well as in the env section of the n8n service.
+
+## RSS sources
+
+`rss_sources.json` is mounted read-only into the n8n container at `/home/node/rss_sources.json`. The workflow reloads it on every execution, so changes take effect immediately without restarting n8n. Each entry has `url`, `name`, `category`, `priority`, and `active`. Set `"active": false` to disable a source.
+
+## Database
+
+Schema is in `scripts/init.sql` and is applied automatically on the first PostgreSQL start. Notable details:
+
+- `rss_articles.url` is unique. INSERTs use `ON CONFLICT (url) DO NOTHING`.
+- `sent_at` is `NULL` at insert and set to `NOW()` only after a successful Discord post. `purge_old_articles()` deletes by `COALESCE(sent_at, created_at) < NOW() - INTERVAL '90 days'`.
+- `article_stats` view exposes total / sent / 24h / 7d counts.
+- `get_source_stats()` returns per-source counts.
+- `filter_new_urls(text[])` and `check_url_duplicates_json(jsonb)` are helpers for n8n dedup queries.
+
+Connect from the host:
 
 ```bash
 docker compose exec postgres psql -U n8n veille_ia
 ```
 
-```sql
--- Vue des statistiques
-SELECT * FROM article_stats;
+## Operations
 
--- Statistiques par source
-SELECT * FROM get_source_stats();
+| Task               | Command                              |
+|--------------------|--------------------------------------|
+| Start              | `./scripts/start.sh`                 |
+| Stop               | `./scripts/stop.sh`                  |
+| Restart            | `./scripts/restart.sh`               |
+| Status + stats     | `./scripts/status.sh`                |
+| Tail logs          | `./scripts/logs.sh {n8n,postgres,rsshub,all}` |
+| Backup DB+workflows| `./scripts/backup.sh`                |
+| Restore            | `./scripts/restore.sh`               |
+| Manual purge       | `SELECT purge_old_articles();` in psql |
 
--- Articles récents
-SELECT title, source, category, published_at
-FROM rss_articles
-ORDER BY published_at DESC
-LIMIT 10;
+A daily backup can be scheduled with cron:
+
+```cron
+0 4 * * * cd /path/to/veille-ia && ./scripts/backup.sh >> logs/backup.log 2>&1
 ```
 
-## 🛠️ Maintenance
+## Security notes
 
-### Backups Automatiques
+- All host port bindings are restricted to `127.0.0.1`. Webdis is internal-only and unauthenticated; do not publish it.
+- n8n is owner-on-first-setup. Create the owner account before exposing the host.
+- `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` is required because Code nodes need `$env`. The exposure is bounded by the `N8N_ENV_VARS` whitelist; review it before adding new env vars.
+- Set `DISCORD_ALLOWED_AUTHORS` to the user IDs of operators if the trigger channels are not fully trusted.
+- The `.env` file is git-ignored. Keep it that way.
 
-Les backups sont créés quotidiennement via cron. Pour configurer :
+## Troubleshooting
 
-```bash
-# Éditer crontab
-crontab -e
+The most common failure modes and their fixes are documented in [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). A quick checklist:
 
-# Ajouter cette ligne (backup quotidien à 4h du matin)
-0 4 * * * cd /chemin/vers/veille-ia && ./scripts/backup.sh >> logs/backup.log 2>&1
-```
+- Bot does not react to mention: verify the `MESSAGE CONTENT` intent and the channel IDs in the `Discord Bot mention1` node.
+- "Already running" loop: a lock is stuck. `docker compose exec redis redis-cli DEL veille_lock`.
+- Gemini `MAX_TOKENS` or `429`: switch `GEMINI_MODEL` to `gemini-2.0-flash` or `gemini-2.5-flash`.
+- `relation "rss_articles" does not exist`: `init.sql` was not applied. `docker compose down -v && ./scripts/start.sh` (this destroys data).
 
-### Purge Manuelle
+## License
 
-```bash
-# Se connecter à PostgreSQL
-docker compose exec postgres psql -U n8n veille_ia
-
-# Purger articles > 90 jours
-SELECT purge_old_articles();
-```
-
-### Mise à Jour
-
-```bash
-# Mettre à jour les images Docker
-docker compose pull
-
-# Redémarrer avec nouvelles images
-docker compose up -d
-
-# Vérifier
-./scripts/status.sh
-```
-
-## 📚 Documentation Complète
-
-- [**INSTALL.md**](docs/INSTALL.md) - Installation détaillée pas-à-pas
-- [**MAINTENANCE.md**](docs/MAINTENANCE.md) - Guide de maintenance
-- [**TROUBLESHOOTING.md**](docs/TROUBLESHOOTING.md) - Résolution de problèmes
-
-## 🤝 Contribution
-
-Les contributions sont les bienvenues ! N'hésitez pas à ouvrir une issue ou une pull request.
-
-## 📄 Licence
-
-MIT License
-
-## 💡 Support
-
-- 🐛 **Bugs** : Ouvrir une issue GitHub
-- 💬 **Questions** : Discussions GitHub
-- 📧 **Contact** : votre@email.com
-
-## 🎯 Roadmap
-
-- [x] Résumés automatiques via Gemini (score + confidence + summary + takeaway)
-- [x] Support multi-webhook Discord (Tech News / Companies / Reddit / Others)
-- [x] Déclenchement par mention Discord Bot + lock Redis
-- [x] Sources RSS centralisées dans `rss_sources.json`
-- [ ] Déplacer backup / purge / status vers GitHub Actions (CI cron)
-- [ ] Interface web de consultation des articles
-- [ ] Export CSV/JSON des articles
-- [ ] Alertes prioritaires pour breaking news
-- [ ] Support LinkedIn via scraper
-- [ ] Dashboard Grafana préconfiguré
-- [ ] Filtres personnalisés par utilisateur
-
-## ⭐ Remerciements
-
-- [n8n](https://n8n.io/) - Automatisation workflow
-- [RSSHub](https://rsshub.app/) - Génération feeds RSS
-- [PostgreSQL](https://www.postgresql.org/) - Base de données
-- Toutes les sources RSS utilisées
-
----
-
-**Made with ❤️ for the AI Community**
+MIT.
