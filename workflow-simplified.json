@@ -241,7 +241,7 @@
         0
       ],
       "parameters": {
-        "jsCode": "// Filter by date\nconst twentyfourAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);\nconst filtered = [];\n\nfor (const item of $input.all()) {\n  try {\n    if (!item.json) continue;\n\n    const url = item.json.link || item.json.url || '';\n    const title = item.json.title || '';\n\n    // Skip if no URL or title\n    if (!url || url.trim() === '' || !title || title.trim() === '') {\n      continue;\n    }\n\n    // Parse publication date\n    let pubDate = new Date();\n    if (item.json.pubDate) {\n      pubDate = new Date(item.json.pubDate);\n    } else if (item.json.isoDate) {\n      pubDate = new Date(item.json.isoDate);\n    }\n\n    // Only filter by date - AI will filter by relevance\n    const isRecent = pubDate >= twentyfourAgo;\n\n    if (isRecent) {\n      let source = 'Unknown';\n      try {\n        source = new URL(url).hostname.replace('www.', '');\n      } catch (e) {\n        source = item.json.creator || item.json.author || 'Unknown';\n      }\n\n      filtered.push({\n        json: {\n          url: url.trim(),\n          title: title,\n          description: (item.json.description || item.json.contentSnippet || '').substring(0, 500),\n          content: (item.json.content || item.json['content:encoded'] || '').substring(0, 1000),\n          source: source,\n          published_at: pubDate.toISOString()\n        }\n      });\n    }\n  } catch (error) {\n    continue;\n  }\n}\n\nreturn filtered;\n"
+        "jsCode": "// Filter by date (last 2 hours)\nconst twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);\nconst filtered = [];\n\nfor (const item of $input.all()) {\n  try {\n    if (!item.json) continue;\n\n    const url = item.json.link || item.json.url || '';\n    const title = item.json.title || '';\n\n    // Skip if no URL or title\n    if (!url || url.trim() === '' || !title || title.trim() === '') {\n      continue;\n    }\n\n    // Parse publication date\n    let pubDate = new Date();\n    if (item.json.pubDate) {\n      pubDate = new Date(item.json.pubDate);\n    } else if (item.json.isoDate) {\n      pubDate = new Date(item.json.isoDate);\n    }\n\n    // Only filter by date - AI will filter by relevance\n    const isRecent = pubDate >= twoHoursAgo;\n\n    if (isRecent) {\n      let source = 'Unknown';\n      try {\n        source = new URL(url).hostname.replace('www.', '');\n      } catch (e) {\n        source = item.json.creator || item.json.author || 'Unknown';\n      }\n\n      filtered.push({\n        json: {\n          url: url.trim(),\n          title: title,\n          description: (item.json.description || item.json.contentSnippet || '').substring(0, 500),\n          content: (item.json.content || item.json['content:encoded'] || '').substring(0, 1000),\n          source: source,\n          published_at: pubDate.toISOString()\n        }\n      });\n    }\n  } catch (error) {\n    continue;\n  }\n}\n\nreturn filtered;\n"
       }
     },
     {
@@ -289,8 +289,7 @@
           "id": "DO0poBoS0C0ayj8K",
           "name": "Postgres account"
         }
-      },
-      "disabled": true
+      }
     },
     {
       "id": "1a564a40-e707-4188-8944-99bd8bb7ab2d",
@@ -302,7 +301,7 @@
         0
       ],
       "parameters": {
-        "jsCode": "const originalItems = $('Collect URLs for DB check1').first().json.items;\nconst dbResult = $input.all();\nconst existingURls = new Set(dbResult.map(res => res.json.url));\n\nconst newArticles = originalItems.filter(item => !existingURls.has(item.url));\n\nconsole.log(`total : ${originalItems.length}`);\nconsole.log(`Already in db : ${existingURls.size}`);\nconsole.log(`new : ${newArticles.length}`);\n\nif (newArticles.length === 0) {\n  return [];\n} else {\n  return newArticles.map(item => ({json: item}));\n}\n"
+        "jsCode": "const originalItems = $('Collect URLs for DB check').first().json.items;\nconst dbResult = $input.all();\nconst existingURls = new Set(dbResult.map(res => res.json.url));\n\nconst newArticles = originalItems.filter(item => !existingURls.has(item.url));\n\nconsole.log(`total : ${originalItems.length}`);\nconsole.log(`Already in db : ${existingURls.size}`);\nconsole.log(`new : ${newArticles.length}`);\n\nif (newArticles.length === 0) {\n  return [];\n} else {\n  return newArticles.map(item => ({json: item}));\n}\n"
       }
     },
     {

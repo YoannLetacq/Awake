@@ -10,12 +10,16 @@ CREATE TABLE IF NOT EXISTS rss_articles (
     description TEXT,
     content TEXT,
     source VARCHAR(255) NOT NULL,
+    source_type VARCHAR(100),
     category VARCHAR(100),
     published_at TIMESTAMP WITH TIME ZONE,
     sent_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Migration: add source_type column if upgrading from an older schema
+ALTER TABLE rss_articles ADD COLUMN IF NOT EXISTS source_type VARCHAR(100);
 
 -- Index pour optimiser les requêtes
 CREATE INDEX IF NOT EXISTS idx_url ON rss_articles(url);
