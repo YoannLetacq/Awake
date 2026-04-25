@@ -59,6 +59,8 @@ env/
 # dev notes (local only)
 DEPLOIEMENT.md
 QUICKSTART.md
+REVIEW.md
+old.json
 
 # OMC state
 .omc/
