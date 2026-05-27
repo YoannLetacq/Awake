@@ -33,7 +33,8 @@ services:
   # N8N - Automatisation
   # ==========================================
   n8n:
-    image: n8nio/n8n:latest
+    # Pinned per shared-n8n-architect H3 finding (2026-05). Bump only after testing.
+    image: n8nio/n8n:2.1.4
     container_name: veille-n8n
     restart: unless-stopped
     environment:
