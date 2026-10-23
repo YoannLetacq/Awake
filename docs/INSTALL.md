@@ -229,21 +229,43 @@ Sauvegarder :
 ### 3. Vérifier la Configuration
 
 ```bash
-# Lister les variables requises vides ou encore au modèle YOUR_ ou VOTRE_ (aucune valeur affichée)
+# Read one variable from .env without sourcing the file or printing its value
+# (surrounding quotes stripped, as in scripts/start.sh)
+env_value() {
+  sed -n "s/^$1=//p" .env | tail -n 1 \
+    | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
+}
+
+# Required variables that are empty or still hold a YOUR_ / VOTRE_ placeholder (no value printed)
 for v in DISCORD_BOT_TOKEN DISCORD_WEBHOOK_TECH_NEWS DISCORD_WEBHOOK_COMPANIES DISCORD_WEBHOOK_REDDIT DISCORD_WEBHOOK_OTHERS DISCORD_ALLOWED_AUTHORS GEMINI_API_KEY; do
-  grep -qE "^$v=.+" .env && ! grep -qE "^$v=.*(YOUR_|VOTRE_)" .env || echo "$v non configuré"
+  case "$(env_value "$v")" in
+    "" | *YOUR_* | *VOTRE_*) echo "$v non configuré" ;;
+  esac
 done
 
-# Vérifier que les mots de passe sont générés (noms des variables seulement, jamais les valeurs)
-if grep -qE '^[A-Z_]*PASSWORD=(CHANGEME|$)' .env; then
-  grep -E '^[A-Z_]*PASSWORD=(CHANGEME|$)' .env | cut -d= -f1 | sed 's/^/Non généré : /'
-else
+# Password variables: names only, never values (empty or CHANGEME = not generated)
+generated=1
+for v in $(grep -oE '^[A-Z_]*PASSWORD=' .env | cut -d= -f1); do
+  case "$(env_value "$v")" in
+    "" | CHANGEME*) echo "Non généré : $v"; generated=0 ;;
+  esac
+done
+if [ "$generated" -eq 1 ]; then
   echo "OK : mots de passe générés"
 fi
-
-# Si "CHANGEME" apparaît encore, relancer setup
-./scripts/setup.sh
 ```
+
+Une variable signalée « Non généré : NOM » a encore une valeur vide ou qui commence par `CHANGEME`. `setup.sh` ne génère ces valeurs que lorsqu'il crée `.env` : s'il trouve déjà un `.env`, il affiche « Fichier .env existe déjà, pas de modification. » et ne le modifie pas. Relancer `./scripts/setup.sh` ne corrige donc rien. Remplacez la valeur de la variable signalée, et celle-là seulement, par une valeur générée de la même façon que dans `setup.sh` :
+
+```bash
+# POSTGRES_PASSWORD: only if flagged
+sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -d '=+/' | cut -c1-32)/" .env
+
+# GRAFANA_PASSWORD: only if flagged
+sed -i "s/^GRAFANA_PASSWORD=.*/GRAFANA_PASSWORD=$(openssl rand -base64 16 | tr -d '=+/' | cut -c1-16)/" .env
+```
+
+Ces corrections se font avant le premier `./scripts/start.sh`. Une fois la stack lancée, PostgreSQL garde le mot de passe de sa première initialisation (dossier `data/postgres`) : changer `POSTGRES_PASSWORD` dans `.env` ne le modifie pas dans la base. Autre option, si `.env` ne contient encore aucune valeur saisie à la main : le sauvegarder, le supprimer, puis relancer `./scripts/setup.sh`, qui en recrée un avec des valeurs générées.
 
 Une variable signalée « non configuré » déclenche un avertissement au démarrage (voir ci-dessous). Un salon dont le webhook n'est pas configuré n'est simplement pas publié : ses articles restent en attente en base, sans erreur visible.
 
