@@ -48,10 +48,10 @@ test('authorize: keeps only mentions whose author is in the trimmed allow-list',
 });
 
 const WEBHOOKS = {
-  DISCORD_WEBHOOK_TECH_NEWS: 'https://discord.test/tech',
-  DISCORD_WEBHOOK_COMPANIES: 'https://discord.test/companies',
-  DISCORD_WEBHOOK_REDDIT: 'https://discord.test/reddit',
-  DISCORD_WEBHOOK_OTHERS: 'https://discord.test/others',
+  DISCORD_WEBHOOK_TECH_NEWS: 'https://discord.com/api/webhooks/101/tech',
+  DISCORD_WEBHOOK_COMPANIES: 'https://discord.com/api/webhooks/102/companies',
+  DISCORD_WEBHOOK_REDDIT: 'https://discord.com/api/webhooks/103/reddit',
+  DISCORD_WEBHOOK_OTHERS: 'https://discord.com/api/webhooks/104/others',
 };
 
 const article = (n, overrides = {}) => ({
@@ -89,8 +89,8 @@ test('format: each source_type posts to its own webhook, one message per group',
   });
   assert.equal(items.length, 2);
   assert.deepEqual(urlsByWebhook(items), {
-    'https://discord.test/tech': ['https://example.com/1'],
-    'https://discord.test/reddit': ['https://example.com/2'],
+    'https://discord.com/api/webhooks/101/tech': ['https://example.com/1'],
+    'https://discord.com/api/webhooks/103/reddit': ['https://example.com/2'],
   });
 });
 
@@ -102,14 +102,14 @@ test('format: an unknown source_type falls back to the Other webhook', async () 
     env: WEBHOOKS,
   });
   assert.deepEqual(urlsByWebhook(items), {
-    'https://discord.test/others': ['https://example.com/1'],
-    'https://discord.test/companies': ['https://example.com/2'],
+    'https://discord.com/api/webhooks/104/others': ['https://example.com/1'],
+    'https://discord.com/api/webhooks/102/companies': ['https://example.com/2'],
   });
 });
 
 test('format: a group whose webhook is empty or unset is skipped with a warning and never throws', async () => {
   // Fails if the skip becomes an error: mutation replaces the warning and `continue` with a throw, so the run rejects.
-  // Fails if the empty check is removed: mutation drops the `if (!webhook)` guard, so an empty url gets posted.
+  // Fails if the empty check is removed: mutation drops the `if (!WEBHOOK_URL.test(webhook))` guard, so an empty url gets posted.
   const { items, warnings } = await runRecording('format-embeds', {
     input: rowsOf(
       article(1, { source_type: 'Tech News' }),
@@ -120,11 +120,25 @@ test('format: a group whose webhook is empty or unset is skipped with a warning 
   });
   assert.deepEqual(
     items.map(({ json }) => json.webhook_url),
-    ['https://discord.test/tech'],
+    ['https://discord.com/api/webhooks/101/tech'],
   );
   assert.equal(warnings.length, 2);
   assert.ok(warnings.some((w) => w.includes('DISCORD_WEBHOOK_REDDIT')));
   assert.ok(warnings.some((w) => w.includes('DISCORD_WEBHOOK_OTHERS')));
+});
+
+test('format: a placeholder webhook counts as unset: its group is skipped with a warning', async () => {
+  // Fails if the placeholder counts as configured: mutation keeps only the truthiness check, so the Tech News group posts to the placeholder URL.
+  const { items, warnings } = await runRecording('format-embeds', {
+    input: rowsOf(article(1, { source_type: 'Tech News' }), article(2, { source_type: 'Reddit Communities' })),
+    env: { ...WEBHOOKS, DISCORD_WEBHOOK_TECH_NEWS: 'https://discord.com/api/webhooks/YOUR_TECH_NEWS_WEBHOOK' },
+  });
+  assert.deepEqual(
+    items.map(({ json }) => json.webhook_url),
+    ['https://discord.com/api/webhooks/103/reddit'],
+  );
+  assert.equal(warnings.length, 1);
+  assert.ok(warnings[0].includes('DISCORD_WEBHOOK_TECH_NEWS'));
 });
 
 test('format: embed carries the French title, description, colour and footer, with the date in Paris time', async () => {

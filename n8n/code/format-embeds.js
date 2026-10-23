@@ -5,6 +5,10 @@ const GROUPS = {
   'Other': { env: 'DISCORD_WEBHOOK_OTHERS', color: 7506394, label: '🔗 Other Sources IA' },
 };
 
+// A webhook is configured only if its trimmed value is a Discord webhook URL: placeholders and empty values fail it.
+// The Claim Top Articles expression in workflow-simplified.json applies the same test.
+const WEBHOOK_URL = /^https:\/\/(?:discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/;
+
 const MAX_EMBEDS = 10;
 const MAX_CHARS = 5800;
 
@@ -62,8 +66,8 @@ for (const [type, group] of Object.entries(GROUPS)) {
   if (articles.length === 0) continue;
 
   const webhook = String($env[group.env] || '').trim();
-  if (!webhook) {
-    console.warn(`${group.env} is empty or unset: skipping ${articles.length} article(s)`);
+  if (!WEBHOOK_URL.test(webhook)) {
+    console.warn(`${group.env} is unset or not a Discord webhook URL: skipping ${articles.length} article(s)`);
     continue;
   }
 

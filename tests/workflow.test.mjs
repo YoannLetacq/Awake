@@ -85,6 +85,20 @@ test('mention branch only reads the DB and always answers', () => {
   assert.match(node('Claim Top Articles').parameters.options.queryReplacement, /DISCORD_WEBHOOK_OTHERS/);
 });
 
+test('mention branch claims only channels whose webhook is a real Discord URL', () => {
+  // Fails if a placeholder counts as configured: mutation keeps only the truthiness check, so 'Company Blogs' is claimed and its POST later fails.
+  // Fails if an empty value counts as configured: mutation tests presence only (`$env[k] !== undefined`), so the empty REDDIT value claims 'Reddit Communities'.
+  const expr = node('Claim Top Articles').parameters.options.queryReplacement;
+  const body = expr.replace(/^=\{\{ /, '').replace(/ \}\}$/, '');
+  const env = {
+    DISCORD_WEBHOOK_TECH_NEWS: 'https://discord.com/api/webhooks/123/abc-DEF_1',
+    DISCORD_WEBHOOK_COMPANIES: 'https://discord.com/api/webhooks/YOUR_COMPANIES_WEBHOOK',
+    DISCORD_WEBHOOK_REDDIT: '',
+  };
+  const replacement = new Function('$env', 'return ' + body)(env);
+  assert.deepEqual(replacement[2], ['Tech News']);
+});
+
 const sourcesFile = (obj) => ({ helpers: { getBinaryDataBuffer: async () => Buffer.from(JSON.stringify(obj)) } });
 
 test('load-config builds a sanitized Reddit URL', async () => {
