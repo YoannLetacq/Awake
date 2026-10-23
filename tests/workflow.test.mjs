@@ -146,6 +146,13 @@ test('compose lets Code node console.log reach the logs and has no fake env whit
   assert.doesNotMatch(compose, /N8N_ENV_VARS/);
 });
 
+test('n8n image is pinned to the version whose quirks the tests encode', () => {
+  // Fails if the pin moves: mutation 2.1.4 -> 2.1.5, or 2.1.4 -> 2.1.45 (the match is exact).
+  // Before any bump, re-verify the {success:true} empty-result shape, the pg-promise $n substitution
+  // in comments and the console no-ops, then update this pin.
+  assert.match(read('docker-compose.yml'), /^\s*image: n8nio\/n8n:2\.1\.4\s*$/m, 'n8n image must be pinned to n8nio/n8n:2.1.4 exactly');
+});
+
 test('no $n placeholder inside an SQL comment', () => {
   // n8n formats parameters with pg-promise over the whole text, comments included:
   // a value with a newline substituted into a "-- $1 ..." comment escapes the comment.
