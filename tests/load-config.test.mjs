@@ -2,7 +2,7 @@
 // double asserts it is read as item 0, property 'data' (the Read File node's output).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runCode } from './harness.mjs';
+import { codeOf, runCode } from './harness.mjs';
 
 const NODE = 'load-config';
 
@@ -50,4 +50,13 @@ test('passes the prefilter flag and the AI keywords through to the output', asyn
   assert.equal(out.length, 1);
   assert.deepEqual(out[0].json.feeds.map((f) => [f.name, f.prefilter]), [['Filtered', true], ['Open', false]]);
   assert.deepEqual(out[0].json.keywords, ['LLM', 'RAG']);
+});
+
+test('diagnostics use console.log, the only console method the n8n 2.1.4 task runner does not drop', () => {
+  // Fails if: any console use other than console.log appears (mutation: console.log -> console.warn,
+  // error, info or debug), since the runner drops those and the loaded-count line never reaches stdout.
+  // Fails if: the loaded-count line is not logged with console.log.
+  const src = codeOf(NODE);
+  assert.deepEqual(src.split('\n').filter((line) => /\bconsole\b(?!\.log\b)/.test(line)), []);
+  assert.match(src, /console\.log\(`📡 Loaded \$\{feeds\.length\} active RSS feeds/);
 });

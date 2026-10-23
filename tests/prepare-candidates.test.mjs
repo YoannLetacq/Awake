@@ -3,7 +3,7 @@
 // helpers are never reused to compute them.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runCode } from './harness.mjs';
+import { codeOf, runCode } from './harness.mjs';
 
 const NODE = 'prepare-candidates';
 const MIN = 60 * 1000;
@@ -508,4 +508,13 @@ test('a NUL character is stripped from text fields', async () => {
   // Fails if clean() keeps U+0000: Postgres rejects it and the whole Insert Candidates batch aborts.
   const out = await prepare({ input: [rss(0, { title: 'Bad\u0000Title', description: 'x\u0000y', link: 'https://example.com/nul' })] });
   assert.deepEqual(rows(out).map((r) => [r.title, r.description]), [['BadTitle', 'xy']]);
+});
+
+test('diagnostics use console.log, the only console method the n8n 2.1.4 task runner does not drop', () => {
+  // Fails if: any console use other than console.log appears (mutation: console.log -> console.warn,
+  // error, info or debug), since the runner drops those and the skip diagnostics never reach stdout.
+  // Fails if: the failed-feed diagnostic is not logged with console.log.
+  const src = codeOf(NODE);
+  assert.deepEqual(src.split('\n').filter((line) => /\bconsole\b(?!\.log\b)/.test(line)), []);
+  assert.match(src, /console\.log\(`Prepare Candidates: feed failed, skipped: /);
 });
