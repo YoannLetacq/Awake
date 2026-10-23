@@ -242,3 +242,42 @@ test('Claim Top Articles claims exactly the channels Format Embeds posts to', as
   assert.deepEqual([...claimed].sort(), [...posted].sort());
   assert.deepEqual(claimed, ['Tech News']);
 });
+
+// One source of truth for the channel decision: the four channels and their env keys (env.template).
+const CHANNELS = [
+  ['Tech News', 'DISCORD_WEBHOOK_TECH_NEWS'],
+  ['Company Blogs', 'DISCORD_WEBHOOK_COMPANIES'],
+  ['Reddit Communities', 'DISCORD_WEBHOOK_REDDIT'],
+  ['Other', 'DISCORD_WEBHOOK_OTHERS'],
+];
+
+// Channels Format Embeds posts to for one row of every source_type, under env.
+const postedChannels = async (env) => {
+  const types = CHANNELS.map(([t]) => t);
+  const items = await runCode('format-embeds', {
+    input: types.map((t, i) => ({ json: {
+      id: i, url: `https://e/${i}`, title: t, source: 'S', source_type: t, category: 'LLM',
+      published_at: '2026-10-22T10:00:00Z', gemini_score: 70,
+    } })),
+    env,
+  });
+  return [...new Set(items.flatMap(({ json }) => json.payload.embeds.map((e) => types[Number(e.url.split('/').pop())])))].sort();
+};
+
+for (const [channel, key] of CHANNELS) {
+  test(`only ${key} set: Claim Top Articles and Format Embeds both pick '${channel}' alone`, async () => {
+    // Fails if a channel is bound to the wrong env key or misnamed in the claim expression:
+    // mutation swaps the Reddit/Other keys, or renames 'Company Blogs' to 'Company Blog'.
+    const env = { [key]: 'https://discord.com/api/webhooks/123/abc-DEF_1' };
+    const claimed = evalReplacement('Claim Top Articles', { $env: env })[2];
+    assert.deepEqual(claimed, [channel]);
+    assert.deepEqual(await postedChannels(env), [channel]);
+  });
+
+  test(`a suffixed lookalike in ${key} is rejected by both Claim Top Articles and Format Embeds`, async () => {
+    // Fails if either webhook regex loses its trailing $ anchor: 'https://.../1/a/extra' is then accepted by one side.
+    const env = { [key]: 'https://discord.com/api/webhooks/1/a/extra' };
+    assert.deepEqual(evalReplacement('Claim Top Articles', { $env: env })[2], []);
+    assert.deepEqual(await postedChannels(env), []);
+  });
+}

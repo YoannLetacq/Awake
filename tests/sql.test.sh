@@ -246,6 +246,20 @@ check_claim_skips_channels_without_webhook() {
   expect "i: the unknown source_type row (Other) stays unsent" "1" "$(q sc_i "SELECT count(*) FROM rss_articles WHERE sent_at IS NULL;")"
 }
 
+# i2. The CASE keeps 'Reddit Communities' as its own channel. Catches: 'Reddit Communities'
+#     dropped from the IN (...) list (the row then counts as 'Other' and follows its webhook).
+check_claim_reddit_is_its_own_channel() {
+  expect "i2: fresh database" ok "$(new_db sc_i2)"
+  {
+    prelude
+    ingest 'https://i2.example/r' 'Story R' 'Reddit Communities' 0 90 70
+  } | sql sc_i2
+  expect "i2: not claimed for the Other channel" "0" \
+    "$(count_rows "$(run_stmt sc_i2 "$CLAIM_TOP_SQL" "60, 5, ARRAY['Other']")")"
+  expect "i2: claimed for the Reddit Communities channel" "Story R" \
+    "$(column 3 "$(run_stmt sc_i2 "$CLAIM_TOP_SQL" "60, 5, ARRAY['Reddit Communities']")")"
+}
+
 # d. Attempt cap. Catches: no score_attempts limit (a candidate that Gemini keeps
 #    failing on would be claimed for scoring forever).
 check_attempt_cap() {
@@ -532,6 +546,7 @@ UPDATE rss_articles SET published_at = now() - interval '47 hours' WHERE url = '
 check_legacy_upgrade
 check_insert_skips_already_sent_title
 check_claim_skips_channels_without_webhook
+check_claim_reddit_is_its_own_channel
 check_rerun_keeps_fresh_rows
 check_insert_is_idempotent
 check_attempt_cap
