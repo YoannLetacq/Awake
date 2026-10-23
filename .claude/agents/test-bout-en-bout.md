@@ -9,8 +9,8 @@ color: purple
 
 <!-- INSTANCIE:
 le:     2026-10-23
-base:   21393d0                 HEAD mesuré, arbre propre ; faits re-mesurés après 2e4bce8
-suite:  Ran 68 / failures=0 / skipped=0 (node --test) · sql.test.sh 35 PASS / 0 FAIL, exit 0
+base:   afe8b22                 HEAD mesuré, arbre propre ; suites re-jouées le 2026-10-23
+suite:  Ran 99 / failures=0 / skipped=0 (node --test) · sql.test.sh 64 PASS / 0 FAIL, exit 0
 gates:  node --test tests/*.test.mjs · bash tests/sql.test.sh · aucun lint ni audit déclaré (pas de package.json, pas de CI)
 par:    sous-agent d'instanciation (ré-instanciation), brief du 2026-10-23
 -->
@@ -80,13 +80,13 @@ quelque chose à mesurer**.
 
 ### 2. Le harnais avant les résultats
 
-**Harnais de ce dépôt, mesuré le 2026-10-23 (HEAD `21393d0`, arbre propre).** Rejoue-le avant de lire un seul zéro.
+**Harnais de ce dépôt, mesuré le 2026-10-23 (HEAD `afe8b22`, arbre propre).** Rejoue-le avant de lire un seul zéro.
 
-- `node --test tests/*.test.mjs` : **68 tests, 68 pass, 0 fail, 0 skipped**. `# skipped` est une ligne à part : lis-la. Moins d'une seconde (0,2 s mesurées).
-- `bash tests/sql.test.sh` : **35 PASS, 0 FAIL**, `All checks PASSED`, exit 0. Environ 20 s (21 s mesurées), sur un conteneur `postgres:16-alpine` jetable (`veille-sqltest-<pid>`, supprimé en fin de run). Aucune sélection de check : un tour joue le fichier entier.
-- **Dégradé** : `TZ` absent et `TZ=Europe/Paris` donnent 68/68 et 0 sauté. `env -i` (aucun PATH) donne **67 pass, 1 fail, 0 sauté** : « workflow JSON is in sync… » (`workflow.test.mjs:17`) tombe sur `spawnSync node ENOENT`, parce que le test lance `node` par son nom (`workflow.test.mjs:19`) et que l'hôte n'a node ni dans `/usr/bin` ni dans `/usr/local/bin`. C'est un rouge, pas un saut : exige 0 FAIL, y compris en dégradé. Docker injoignable (`DOCKER_HOST` invalide) fait **abandonner** `sql.test.sh` en exit 125, sans aucun PASS ni FAIL : c'est un échec dur, jamais un saut. Lis l'exit code, pas seulement les PASS.
+- `node --test tests/*.test.mjs` : **99 tests, 99 pass, 0 fail, 0 skipped**. `# skipped` est une ligne à part : lis-la. Moins d'une seconde (0,2 s mesurées).
+- `bash tests/sql.test.sh` : **64 PASS, 0 FAIL**, `All checks PASSED`, exit 0. Environ 2 min (120,5 s mesurées à `afe8b22`), sur un conteneur `postgres:16-alpine` jetable (`veille-sqltest-<pid>`, supprimé en fin de run). Aucune sélection de check : un tour joue le fichier entier.
+- **Dégradé** : `TZ` absent et `TZ=Europe/Paris` donnent 99/99 et 0 sauté. `env -i` (aucun PATH, node appelé par son chemin absolu) donne **98 pass, 1 fail, 0 sauté** : « workflow JSON is in sync… » (`workflow.test.mjs:17`) tombe sur `spawnSync node ENOENT`, parce que le test lance `node` par son nom (`workflow.test.mjs:19`) et que l'hôte n'a node ni dans `/usr/bin` ni dans `/usr/local/bin` (ici, node est sous `~/.nvm`). C'est un rouge, pas un saut : exige 0 FAIL, y compris en dégradé. Docker injoignable (`DOCKER_HOST=tcp://127.0.0.1:1`) fait **abandonner** `sql.test.sh` en exit 125, sans aucun PASS ni FAIL : c'est un échec dur, jamais un saut. Lis l'exit code, pas seulement les PASS.
 - Aucun échec préexistant. Aucun saut conditionnel : `skip:` est absent de `tests/`. Une ligne `FAIL`, un `skipped` supérieur à 0 ou un exit différent de 0 est un rouge nouveau.
-- **Pièges d'outillage mesurés.** Le shell est **zsh** (`/usr/bin/zsh`) : une variable non quotée ne se découpe pas en mots, donc `$cmd node …` avec `cmd="env -u TZ"` rend exit 127. Utilise `bash -c '…'` ou des tableaux. `$TMPDIR` est vide dans ce harnais : `> $TMPDIR/x` vise la racine et est refusé ; écris dans le scratchpad de session. Une erreur SQL non attendue est comptée en FAIL depuis `1650827` : `sql()` la journalise et le script sort en 1 (mesuré dans une copie : une fonction absente dans `claim-top-articles.sql` donne « 23 check(s) FAILED », exit 1). Un check qui attend une erreur le déclare par `EXPECT_SQL_ERROR=1` ; aucun check ne le fait aujourd'hui (mesuré).
+- **Pièges d'outillage mesurés.** Le shell est **zsh** (`/usr/bin/zsh`) : une variable non quotée ne se découpe pas en mots, donc `$cmd node …` avec `cmd="env -u TZ"` rend exit 127. Utilise `bash -c '…'` ou des tableaux. `$TMPDIR` est vide dans ce harnais : `> $TMPDIR/x` vise la racine et est refusé ; écris dans le scratchpad de session. Une erreur SQL non attendue est comptée en FAIL depuis `1650827` : `sql()` la journalise et le script sort en 1 (mesuré dans une copie à `afe8b22` : `SET sent_at = nowx()` dans `claim-top-articles.sql`, fonction absente, donne « 40 check(s) FAILED », exit 1). Un check qui attend une erreur le déclare par `EXPECT_SQL_ERROR=1` ; aucun check ne le fait aujourd'hui (mesuré).
 
 Relève les comptes **et les tests sautés**. Sur ces parcours, les tests sautés sont souvent
 précisément ceux qui gardent le lancement réel de ressources — sans eux tu déclares le
@@ -187,30 +187,30 @@ Fichier indiqué par le brief, puis **une seule ligne** : chemin + verdict.
 
 ---
 
-## Faits de ce dépôt (instanciés le 2026-10-23, base 21393d0)
+## Faits de ce dépôt (instanciés le 2026-10-23, base afe8b22)
 
 **Parcours réels et leurs livrables.**
-- **P1, collecte et scoring, déclenché toutes les 30 min.** `Every 30 Minutes` lance trois branches **en parallèle** (mesuré dans `connections`) : (a) collecte `Read Sources File` → `Load Config` → `Reddit Fetch` → `Expand Feeds` → `RSS Read` → `Prepare Candidates` → `Insert Candidates` ; (b) scoring `Claim Unscored` (25 au plus) → `Build Gemini Request` → `Gemini Score` (un appel) → `Parse Scores` → `Save Scores` ; (c) `Purge Old Articles` à chaque tick (`workflow.test.mjs:48` vérifie la branche planifiée). Le scoring ne suit donc pas l'insertion du même tick : il réclame le stock déjà en base. Livrable : lignes de `rss_articles` (`gemini_confidence`, `gemini_score`, `category`, `ai_tag`, `ai_summary`, `ai_takeaway`).
-- **P2, mention vers publication, base seule avant le POST.** `Discord Bot mention1` → `Authorize Mention` → `Claim Top Articles` → `Has Articles?`. Vrai : `Format Embeds` → `Send to Discord`, un POST par message (par canal, par tranche de 10 embeds ou de 5 800 caractères). Faux : `Reply Nothing New`. Auteur hors allow-list : le filtre rend une sortie vide, donc aucun nœud aval ne tourne (silence attendu selon le comportement n8n, non joué). Livrable : messages Discord (`content`, `embeds`, `allowed_mentions: {parse: []}`).
+- **P1, collecte et scoring, déclenché toutes les 30 min.** `Every 30 Minutes` lance trois branches **en parallèle** (mesuré dans `connections`) : (a) collecte `Read Sources File` → `Load Config` → `Reddit Fetch` → `Expand Feeds` → `RSS Read` → `Prepare Candidates` → `Insert Candidates` ; (b) scoring `Claim Unscored` (25 au plus) → `Build Gemini Request` → `Gemini Score` (un appel) → `Parse Scores` → `Save Scores` ; (c) `Purge Old Articles` à chaque tick, placé au-dessus du scoring dans le graphe (`workflow.test.mjs:48` vérifie la branche planifiée, `:72` vérifie la place de la purge). Le scoring ne suit donc pas l'insertion du même tick : il réclame le stock déjà en base. Livrable : lignes de `rss_articles` (`gemini_confidence`, `gemini_score`, `category`, `ai_tag`, `ai_summary`, `ai_takeaway`).
+- **P2, mention vers publication, base seule avant le POST.** `Discord Bot mention1` → `Authorize Mention` → `Claim Top Articles` → `Has Articles?`. Vrai : `Format Embeds` → `Send to Discord`, un POST par message (par canal, par tranche de 10 embeds ou de 5 800 caractères). Faux : `Reply Nothing New`. Auteur hors allow-list : le filtre rend une sortie vide (`authorize-mention.js:13`), donc aucun nœud aval ne tourne (silence attendu selon le comportement n8n, non joué). Livrable : messages Discord (`content`, `embeds`, `allowed_mentions: {parse: []}`).
 
 **Régime de production contre régime de test.**
-- Production : n8n `2.1.4` épinglé (`docker-compose.yml:37`) ; `TZ=${TZ:-Europe/Paris}` (`docker-compose.yml:13`, `:68` et `:69`) ; Postgres `16-alpine` (`:6`) ; le conteneur n8n a un DNS épinglé sur `1.1.1.1` et `8.8.8.8` (`docker-compose.yml:78` à `:80`, commit `ee3a246`, 2026-05-11 : le résolveur WSL2 transmettait vers `10.255.255.254`, injoignable depuis les conteneurs, et cassait tous les appels sortants, Discord compris) ; modèle Gemini via `GEMINI_MODEL`.
-- Test : node `22.21.0` sur l'hôte, pas de n8n, pas de DNS épinglé, pas de réseau, Postgres `16-alpine` jetable. **Aucun parcours n'est joué de bout en bout** dans les suites : les nœuds HTTP et Discord ne tournent jamais.
+- Production : n8n `2.1.4` épinglé (`docker-compose.yml:37`) ; `TZ=${TZ:-Europe/Paris}` (`docker-compose.yml:13`, `:67` et `:68`) ; Postgres `16-alpine` (`:6`) ; le conteneur n8n a un DNS épinglé sur `1.1.1.1` et `8.8.8.8` (`docker-compose.yml:74` à `:76`, commit `ee3a246`, 2026-05-11 : le résolveur WSL2 transmettait vers `10.255.255.254`, injoignable depuis les conteneurs, et cassait tous les appels sortants, Discord compris) ; modèle Gemini via `GEMINI_MODEL`.
+- Test : node `22.21.0` sur l'hôte (mesuré), pas de n8n, pas de DNS épinglé, pas de réseau, Postgres `16-alpine` jetable. **Aucun parcours n'est joué de bout en bout** dans les suites : les nœuds HTTP et Discord ne tournent jamais.
 - Un échec de DNS ou de résolution n'existe que dans le régime de production. Ne le classe pas en défaut de code sans l'avoir reproduit.
 
 **Configuration la plus chargée (calcul, à jouer).** Quatre canaux de cinq articles chacun (`$2 = 5`), titres pleins (256 caractères), descriptions pleines (1 000), pied d'environ 100 caractères : un embed plein fait environ 1 350 caractères, cinq dépassent 5 800 et se découpent en 4 + 1 par canal. À confirmer en jouant `format-embeds.js` sur ces entrées.
 
 **Deux sorties d'un même run qui doivent concorder.**
-- L'embed affiche `Score : N/100` avec le `gemini_score` **de la même ligne** renvoyée par le claim.
-- Le résumé n'apparaît que si `gemini_confidence >= 85` et `gemini_score >= 60` (la même porte que `parse-scores.js`, `:50`).
-- Le pied de page date en `Europe/Paris` (`fmtDate`, fuseau explicite).
+- L'embed affiche `Score : N/100` avec le `gemini_score` **de la même ligne** renvoyée par le claim (`format-embeds.js:31`).
+- Le résumé n'apparaît que si `gemini_confidence >= 85` et `gemini_score >= 60` (la même porte que `parse-scores.js`, `:72`).
+- Le pied de page date en `Europe/Paris` (`fmtDate`, `format-embeds.js:22`, fuseau explicite).
 
 **Modes d'échec à éprouver sur les parcours.**
-- Gemini en échec ou réponse inexploitable : `Parse Scores` rend `[]`, les lignes restent non scorées, `score_attempts` monte, abandon à 3 tentatives (`claim-unscored.sql`, `score_attempts < 3`). Seul `sql.test.sh` (check d) couvre la fin de cette chaîne, côté SQL.
-- Aucun canal avec un webhook Discord valide (vide ou gabarit) : `Claim Top Articles` ne réclame rien pour ce canal (`workflow.test.mjs:88` pour l'expression, check i pour le SQL).
+- Gemini en échec ou réponse inexploitable : `Parse Scores` lève une exception (`parse-scores.js:7` et `:28`, test `gemini.test.mjs:218`) et le run devient rouge ; les lignes restent non scorées, `score_attempts` monte, abandon à 3 tentatives (`claim-unscored.sql:18`, `score_attempts < 3`). Seul `sql.test.sh` (check d, `:265`) couvre la fin de cette chaîne, côté SQL.
+- Aucun canal avec un webhook Discord valide (vide ou gabarit) : `Claim Top Articles` ne réclame rien pour ce canal (`workflow.test.mjs:90` pour l'expression, check i pour le SQL, `sql.test.sh:238`).
 - Un POST Discord échoue après le claim : les articles restent marqués envoyés (fenêtre connue, voir test-integration).
 
-**Démarrage (`scripts/start.sh`, non couvert par les suites).** `start.sh` vérifiait `DISCORD_WEBHOOK_URL`, variable obsolète, et aucune des sept variables réellement lues par le workflow. `c88b4a0` (2026-10-23) les vérifie désormais : quatre webhooks de canal, `DISCORD_BOT_TOKEN`, `DISCORD_ALLOWED_AUTHORS` et `GEMINI_API_KEY`, avec alerte si vide, si un `YOUR_` subsiste, ou si un webhook n'a pas le format d'une URL Discord, puis question avant de continuer. Aucune suite ne lance ni ne lit `start.sh` ni `setup.sh` (mesuré : aucune référence dans `tests/`). C'est le premier parcours d'un utilisateur : un trou de couverture à déclarer si le diff le touche.
+**Démarrage (`scripts/start.sh`, non couvert par les suites).** `start.sh` vérifiait `DISCORD_WEBHOOK_URL`, variable obsolète ; `c88b4a0` (2026-10-23) le corrige : il vérifie désormais sept variables (`start.sh:32` : quatre webhooks de canal, `DISCORD_BOT_TOKEN`, `DISCORD_ALLOWED_AUTHORS` et `GEMINI_API_KEY`), avec alerte si la valeur est vide, si un `YOUR_` ou un `VOTRE_` subsiste (`:36`), ou si un webhook n'a pas le format d'une URL Discord (`:38`), puis question avant de continuer (`:50`). Aucune suite ne lance ni ne lit `start.sh` ni `setup.sh` (mesuré : aucune référence dans `tests/`). C'est le premier parcours d'un utilisateur : un trou de couverture à déclarer si le diff le touche.
 
 **Ressources à ne pas perturber.** Au moment de la mesure (2026-10-23), **aucun conteneur `veille-*` ne tourne** (`docker ps`). D'autres conteneurs (postgres, prismao, lycheedev, crm, et d'autres) appartiennent à d'autres projets : ne les touche pas. **Ne joue jamais P2 en réel** : il poste sur les webhooks Discord de production. Le verdict sur P2 porte sur le payload mesuré, jamais sur un post réel.
 

@@ -9,8 +9,8 @@ color: red
 
 <!-- INSTANCIE:
 le:     2026-10-23
-base:   21393d0                 HEAD mesuré, arbre propre ; faits re-mesurés après 2e4bce8
-suite:  Ran 68 / failures=0 / skipped=0 (node --test) · sql.test.sh 35 PASS / 0 FAIL, exit 0
+base:   afe8b22                 HEAD mesuré, arbre propre ; suites re-jouées le 2026-10-23
+suite:  Ran 99 / failures=0 / skipped=0 (node --test) · sql.test.sh 64 PASS / 0 FAIL, exit 0
 gates:  node --test tests/*.test.mjs · bash tests/sql.test.sh · aucun lint ni audit déclaré (pas de package.json, pas de CI)
 par:    sous-agent d'instanciation (ré-instanciation), brief du 2026-10-23
 -->
@@ -95,13 +95,13 @@ garde que le diff ajoute, ne demande pas seulement « refuse-t-elle ? » mais :
 
 ### 1. Le harnais avant tout constat
 
-**Harnais de ce dépôt, mesuré le 2026-10-23 (HEAD `21393d0`, arbre propre).** Rejoue-le avant de lire un seul zéro.
+**Harnais de ce dépôt, mesuré le 2026-10-23 (HEAD `afe8b22`, arbre propre).** Rejoue-le avant de lire un seul zéro.
 
-- `node --test tests/*.test.mjs` : **68 tests, 68 pass, 0 fail, 0 skipped**. `# skipped` est une ligne à part : lis-la. Moins d'une seconde (0,2 s mesurées).
-- `bash tests/sql.test.sh` : **35 PASS, 0 FAIL**, `All checks PASSED`, exit 0. Environ 20 s (21 s mesurées), sur un conteneur `postgres:16-alpine` jetable (`veille-sqltest-<pid>`, supprimé en fin de run). Aucune sélection de check : un tour joue le fichier entier.
-- **Dégradé** : `TZ` absent et `TZ=Europe/Paris` donnent 68/68 et 0 sauté. `env -i` (aucun PATH) donne **67 pass, 1 fail, 0 sauté** : « workflow JSON is in sync… » (`workflow.test.mjs:17`) tombe sur `spawnSync node ENOENT`, parce que le test lance `node` par son nom (`workflow.test.mjs:19`) et que l'hôte n'a node ni dans `/usr/bin` ni dans `/usr/local/bin`. C'est un rouge, pas un saut : exige 0 FAIL, y compris en dégradé. Docker injoignable (`DOCKER_HOST` invalide) fait **abandonner** `sql.test.sh` en exit 125, sans aucun PASS ni FAIL : c'est un échec dur, jamais un saut. Lis l'exit code, pas seulement les PASS.
+- `node --test tests/*.test.mjs` : **99 tests, 99 pass, 0 fail, 0 skipped**. `# skipped` est une ligne à part : lis-la. Moins d'une seconde (0,2 s mesurées).
+- `bash tests/sql.test.sh` : **64 PASS, 0 FAIL**, `All checks PASSED`, exit 0. Environ 2 min (120,5 s mesurées à `afe8b22`), sur un conteneur `postgres:16-alpine` jetable (`veille-sqltest-<pid>`, supprimé en fin de run). Aucune sélection de check : un tour joue le fichier entier.
+- **Dégradé** : `TZ` absent et `TZ=Europe/Paris` donnent 99/99 et 0 sauté. `env -i` (aucun PATH, node appelé par son chemin absolu) donne **98 pass, 1 fail, 0 sauté** : « workflow JSON is in sync… » (`workflow.test.mjs:17`) tombe sur `spawnSync node ENOENT`, parce que le test lance `node` par son nom (`workflow.test.mjs:19`) et que l'hôte n'a node ni dans `/usr/bin` ni dans `/usr/local/bin` (ici, node est sous `~/.nvm`). C'est un rouge, pas un saut : exige 0 FAIL, y compris en dégradé. Docker injoignable (`DOCKER_HOST=tcp://127.0.0.1:1`) fait **abandonner** `sql.test.sh` en exit 125, sans aucun PASS ni FAIL : c'est un échec dur, jamais un saut. Lis l'exit code, pas seulement les PASS.
 - Aucun échec préexistant. Aucun saut conditionnel : `skip:` est absent de `tests/`. Une ligne `FAIL`, un `skipped` supérieur à 0 ou un exit différent de 0 est un rouge nouveau.
-- **Pièges d'outillage mesurés.** Le shell est **zsh** (`/usr/bin/zsh`) : une variable non quotée ne se découpe pas en mots, donc `$cmd node …` avec `cmd="env -u TZ"` rend exit 127. Utilise `bash -c '…'` ou des tableaux. `$TMPDIR` est vide dans ce harnais : `> $TMPDIR/x` vise la racine et est refusé ; écris dans le scratchpad de session. Une erreur SQL non attendue est comptée en FAIL depuis `1650827` : `sql()` la journalise et le script sort en 1 (mesuré dans une copie : une fonction absente dans `claim-top-articles.sql` donne « 23 check(s) FAILED », exit 1). Un check qui attend une erreur le déclare par `EXPECT_SQL_ERROR=1` ; aucun check ne le fait aujourd'hui (mesuré).
+- **Pièges d'outillage mesurés.** Le shell est **zsh** (`/usr/bin/zsh`) : une variable non quotée ne se découpe pas en mots, donc `$cmd node …` avec `cmd="env -u TZ"` rend exit 127. Utilise `bash -c '…'` ou des tableaux. `$TMPDIR` est vide dans ce harnais : `> $TMPDIR/x` vise la racine et est refusé ; écris dans le scratchpad de session. Une erreur SQL non attendue est comptée en FAIL depuis `1650827` : `sql()` la journalise et le script sort en 1 (mesuré dans une copie à `afe8b22` : `SET sent_at = nowx()` dans `claim-top-articles.sql`, fonction absente, donne « 40 check(s) FAILED », exit 1). Un check qui attend une erreur le déclare par `EXPECT_SQL_ERROR=1` ; aucun check ne le fait aujourd'hui (mesuré).
 
 Relève les comptes **et les tests sautés** : sans cela tu vas déclarer non gardé ce qui est
 gardé. Les échecs attendus te sont donnés dans le brief — **ce ne sont pas tes constats**.
@@ -224,27 +224,26 @@ Fichier indiqué par le brief, puis **une seule ligne** : chemin + verdict.
 
 ---
 
-## Faits de ce dépôt (instanciés le 2026-10-23, base 21393d0)
+## Faits de ce dépôt (instanciés le 2026-10-23, base afe8b22)
 
 **Formes réelles d'entrée invalide, à reprendre des fixtures existantes.**
-- RSS (`tests/prepare-candidates.test.mjs`) : item sans `pairedItem` (`:86`), `pairedItem` en tableau ou hors plage (`:95`), `link` non http ou de plus de 2 048 caractères (`:246`), item portant une clé `error` (`:443`), NUL dans un champ (`:456`), catégorie qui est un nom hérité d'objet (`:396`).
-- Reddit : erreur sans listing (`:330`), posts `stickied` ou `over_18` (`:299`).
-- Gemini (`tests/gemini.test.mjs`) : réponse entourée d'une fence de code json (`:189`), ordre inversé (`:103`), id en chaîne (`:230`), `topic` ou `tag` hors liste (`:203`, `:215`).
-- Discord (`tests/discord.test.mjs`) : allow-list avec espaces ou virgules seules (`:26`, `:39`), `authorId` numérique (`:42`), webhook de gabarit `https://discord.com/api/webhooks/YOUR_…` (`:130`, issu de `6f11e2b`).
+- RSS (`tests/prepare-candidates.test.mjs`) : item sans `pairedItem` (`:86`), `pairedItem` en tableau ou hors plage (`:95`), `link` non http, illisible ou de plus de 2 048 caractères (`:264`), item portant une clé `error` (`:494`), NUL dans un champ (`:507`), catégorie qui est un nom hérité d'objet (`:447`).
+- Reddit : erreur sans listing (`:359`), posts `stickied` ou `over_18` (`:328`).
+- Gemini (`tests/gemini.test.mjs`) : réponse entourée d'une fence de code json (`:268`), ordre inversé (`:110`), id en chaîne (`:309`), `topic` hors liste (`:282`), `tag` hors liste (`:294`).
+- Discord (`tests/discord.test.mjs`) : allow-list avec espaces ou virgules seules (`:27`, `:40`), `authorId` numérique (`:40`), webhook de gabarit `https://discord.com/api/webhooks/YOUR_…` (`:140`, issu de `6f11e2b`).
 
-**Valeurs légitimes qu'une garde rejetterait à tort.** Score 0 et confiance 0 (bornes ; `NaN` rendu 0 : `gemini.test.mjs:143`) ; porte éprouvée à score 59 et 60 et à confiance 85 (`gemini.test.mjs:159`), confiance 84 non jouée à la porte, et `84,6` arrondie à 85 (`gemini.test.mjs:143`) ; priorité absente rendue 0 (`prepare-candidates.test.mjs:418`) ; Reddit désactivé (`:341`) ; titre au-delà de 1 000 tronqué et non rejeté (`prepare-candidates.test.mjs:167`).
+**Valeurs légitimes qu'une garde rejetterait à tort.** Score 0 et confiance 0 (bornes ; `NaN` rendu 0 : `gemini.test.mjs:172`) ; porte éprouvée à score 59 et 60 et à confiance 85 (`gemini.test.mjs:188`), confiance 84 non jouée à la porte, et `84,6` arrondie à 85 (`gemini.test.mjs:172`) ; priorité absente rendue 0 (`prepare-candidates.test.mjs:469`) ; Reddit désactivé (`:370`) ; titre au-delà de 1 000 tronqué et non rejeté (`prepare-candidates.test.mjs:184`).
 
-**Bornes non éprouvées par les tests (mesuré).** La fenêtre de 48 h est **pinnée à la minute** depuis `1650827` : `prepare-candidates.test.mjs:123` garde 47 h 59 et écarte 48 h 01. Mesuré dans une copie : une fenêtre de 49 h fait tomber ce seul test. Non jouée : la borne exacte (48 h 00). Ne le recompte que si le diff touche `inWindow` ou ces tests.
+**Bornes non éprouvées par les tests (mesuré).** La fenêtre de 48 h est **pinnée à la minute** depuis `1650827` : `prepare-candidates.test.mjs:123` garde 47 h 59 et écarte 48 h 01. Mesuré dans une copie d'`afe8b22` : une fenêtre de 49 h fait tomber ce seul test de comportement. Non jouée : la borne exacte (48 h 00). Ne le recompte que si le diff touche `inWindow` ou ces tests.
 
-**Entrée vide.** `prepare-candidates` rend `[]` (`:437`) ; `build-gemini-request` rend `[]` sur le `{success:true}` que n8n émet pour un claim vide (`gemini.test.mjs:239`). `format-embeds` sans ligne : aucun test nommé, à sonder.
+**Entrée vide.** `prepare-candidates` rend `[]` (`:488`) ; `build-gemini-request` rend `[]` sur le `{success:true}` que n8n émet pour un claim vide (`gemini.test.mjs:318`). `format-embeds` sans ligne : aucun test nommé, à sonder.
 
 **Ce que le dépôt ne garde pas (à sonder, non reproduit).**
-- `claim-unscored.sql` n'est **jamais testé en concurrence**. Le test de concurrence (`sql.test.sh:329`, check g) ne joue que `claim-top-articles.sql` ; `claim-unscored.sql` n'apparaît qu'aux checks a et d, séquentiels. Sonde : deux sessions sur `claim-unscored.sql`, sur le modèle de ce test. Le scoring part en parallèle de la collecte à chaque tick (voir test-integration, J10).
-- `load-config.js` : ses quatre gardes (`throw` aux lignes 5, 12, 16 et 23) ne sont nommées par aucun test (aucun `rejects` ni `throws` sur leurs messages ; voir test-unitaire).
+- `claim-unscored.sql` n'est **jamais testé en concurrence**. Le test de concurrence (`sql.test.sh:358`, check g) ne joue que `claim-top-articles.sql`. `claim-unscored.sql` n'apparaît qu'aux checks a, d, j, k et l (`:190`, `:271`, `:405`, `:416`, `:430` à `:437`, `:447`), tous séquentiels : le bail de 15 minutes y est éprouvé, pas le `FOR UPDATE SKIP LOCKED` entre deux sessions. Sonde : deux sessions sur `claim-unscored.sql`, sur le modèle de ce test. Le scoring part en parallèle de la collecte à chaque tick (voir test-integration, J10).
 - POST Discord en échec après le claim : `sent_at` posé, aucun nœud ne le remet à NULL. `Send to Discord` réessaie trois fois (`retryOnFail`, `maxTries: 3`) puis `onError: continueRegularOutput`. Non reproductible ici (nœuds HTTP non exécutés) : décris-le, ne le constate pas.
 
-**Faiblesses tracées.** `origin` pointe sur `YoannLetacq/Awake`, pas sur ce dépôt, et `gh issue list --state all` rend une liste vide (mesuré le 2026-10-23). **Aucune faiblesse n'a de numéro d'issue** : n'en cite aucun. Nomme-les par fichier et par commande.
+**Faiblesses tracées.** `origin` pointe sur `YoannLetacq/Awake`, pas sur ce dépôt, et `gh issue list --state all --limit 60` rend une liste vide (mesuré le 2026-10-23 : sortie de 0 octet). **Aucune faiblesse n'a de numéro d'issue** : n'en cite aucun. Nomme-les par fichier et par commande.
 
-**Classes déjà payées à chercher.** `5b91ec0` (2026-04-25) : une date absente rendue « maintenant » (gardée, voir test-unitaire). `6b080f8` : allow-list vide (gardée). `2e4bce8` : un 429 Gemini dans le chemin mention (gardé structurellement par `workflow.test.mjs:75`). `6f11e2b` (2026-10-23) : un gabarit de webhook compté comme canal configuré ; ses articles étaient réclamés puis perdus si le POST échouait. La forme du webhook est gardée (`discord.test.mjs:130`, `workflow.test.mjs:88`) ; la fenêtre claim-puis-POST reste ouverte pour tout autre échec de POST.
+**Classes déjà payées à chercher.** `5b91ec0` (2026-04-25) : une date absente rendue « maintenant » (gardée, voir test-unitaire). `6b080f8` (2026-10-23) : allow-list vide (gardée, `discord.test.mjs:27`). `2e4bce8` (2026-10-23) : 25 appels de flux et un appel Gemini par article dans le chemin mention, dont des 429 (gardé structurellement par `workflow.test.mjs:77`). `6f11e2b` (2026-10-23) : un gabarit de webhook compté comme canal configuré ; ses articles étaient réclamés puis perdus si le POST échouait. La forme du webhook est gardée (`discord.test.mjs:140`, `workflow.test.mjs:90`) ; la fenêtre claim-puis-POST reste ouverte pour tout autre échec de POST.
 
 **Non mesuré.** Le comportement de n8n sur `$()` avec une entrée vide ; les réponses réelles de Gemini, Reddit et RSS.
