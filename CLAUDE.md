@@ -6,26 +6,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is an **automated AI technology monitoring system** (Système de Veille IA) built with Docker Compose, orchestrating:
 - **n8n** (workflow automation) for RSS feed collection, filtering, and Discord notifications
-- **PostgreSQL** for article deduplication and 90-day retention
-- **RSSHub** for custom RSS feed generation
+- **PostgreSQL** for article deduplication, scores and 90-day retention
+- **Gemini** (one batched call per run) for relevance scoring and French summaries
 
-The system monitors 30+ AI-focused RSS sources (TechCrunch, Hacker News, OpenAI, Anthropic, Reddit communities, etc.) and sends filtered notifications to Discord every 2 hours.
+A scheduled branch (every 30 min) collects ~20 RSS feeds plus Reddit (OAuth API), stores every new article and scores it once with Gemini. A Discord bot `@mention` only reads the DB and posts the best unsent articles (~1 s).
 
 ## Architecture
 
 ```
-RSS Feeds (30+ sources)
-    ↓
-  n8n (workflow automation)
-    ↓
-PostgreSQL (90-day deduplication)
-    ↓
-Discord (notifications every 2h)
+Schedule 30 min → RSS + Reddit → Prepare Candidates → INSERT (dedup by url)
+               → Claim Unscored (25) → ONE Gemini call → Save Scores
+               → purge_old_articles()
+@mention → Authorize → Claim Top Articles (UPDATE … RETURNING) → Format Embeds → webhooks
 ```
 
 **Key Components:**
-- `docker-compose.yml`: Orchestrates all services (postgres, n8n, rsshub)
-- `rss_sources.json`: 30+ RSS sources with categories and priority levels
+- `docker-compose.yml`: Orchestrates all services (postgres, n8n)
+- `rss_sources.json`: RSS sources (category → Discord channel, priority → ranking bonus, prefilter) + `reddit` block
+- `workflow-simplified.json`: the n8n workflow, **built** by `scripts/build-workflow.mjs` from `n8n/code/*.js` (Code nodes) and `n8n/sql/*.sql` (Postgres nodes); file name = node name in kebab-case. Edit the sources, never the inlined strings, then rebuild.
+- `tests/`: `node --test tests/*.test.mjs` (Code nodes via `tests/harness.mjs` + structure) and `bash tests/sql.test.sh` (throwaway Postgres container)
 - `scripts/init.sql`: PostgreSQL schema with deduplication, views, and purge functions
 - `scripts/*.sh`: Bash utilities for setup, start/stop, logs, backups, status
 
@@ -45,7 +44,6 @@ Discord (notifications every 2h)
 # View logs
 ./scripts/logs.sh n8n        # n8n workflow logs
 ./scripts/logs.sh postgres   # Database logs
-./scripts/logs.sh rsshub     # RSSHub logs
 ./scripts/logs.sh all        # All logs
 
 # Restart services
@@ -121,10 +119,9 @@ Defines all RSS sources with:
 To modify sources: edit this file and restart with `./scripts/restart.sh`
 
 ### docker-compose.yml
-Orchestrates 3 services:
+Orchestrates 2 services:
 - **postgres** (port 5433→5432): PostgreSQL 16 with persistent volume at `./data/postgres` (mapped to 5433 to avoid conflicts with local PostgreSQL)
 - **n8n** (port 5678): Workflow automation with Basic Auth
-- **rsshub** (port 1200): Custom RSS feed generator
 
 Optional services (commented out): prometheus, grafana for monitoring
 
@@ -132,7 +129,7 @@ Optional services (commented out): prometheus, grafana for monitoring
 
 ### Tables
 - **rss_articles**: Main table storing all collected articles
-  - Fields: id, url (unique), title, description, content, source, category, published_at, sent_at, created_at, updated_at
+  - Fields: id, url (unique), title, description, content, source, source_type (Discord channel), category (Gemini topic), prio, gemini_confidence, gemini_score, ai_tag, ai_summary, ai_takeaway, score_attempts, published_at, sent_at (set when a mention claims it), created_at, updated_at
   - Indexes optimized for url, sent_at, published_at, source, category lookups
 - **execution_logs**: Tracks workflow execution history
 
@@ -140,7 +137,7 @@ Optional services (commented out): prometheus, grafana for monitoring
 - **article_stats**: Provides real-time statistics (total articles, sent count, last 24h/7days, sources, categories)
 
 ### Functions
-- **purge_old_articles()**: Removes articles older than 90 days (called automatically by n8n workflow)
+- **purge_old_articles()**: Removes articles older than 90 days (called on every scheduled run)
 - **get_source_stats()**: Returns statistics grouped by source
 - **update_updated_at_column()**: Trigger function to auto-update updated_at timestamp
 
@@ -148,16 +145,9 @@ Optional services (commented out): prometheus, grafana for monitoring
 
 Access at `http://localhost:5678` (credentials in .env)
 
-**Expected workflows:**
-1. **Veille IA Master**: Main workflow running every 2 hours
-   - Collects RSS feeds
-   - Filters by keywords (AI-related terms)
-   - Deduplicates against PostgreSQL
-   - Categorizes articles (LLM, Agents, Vision, Coding, Research, RAG)
-   - Formats Discord embeds
-   - Sends to Discord webhook
-
-2. **Purge Articles**: Runs daily at 3am to clean articles older than 90 days
+**One workflow** (`workflow-simplified.json`, import it), two triggers:
+1. **Every 30 Minutes**: collect (RSS + Reddit) → insert new candidates; claim up to 25 unscored rows → one Gemini call → save scores; purge.
+2. **Discord Bot mention1**: authorize (deny if `DISCORD_ALLOWED_AUTHORS` empty) → claim ≤5 per channel (confidence ≥ 85, score ≥ 60) → post embeds, or reply "Rien de nouveau".
 
 ## Project Structure
 
@@ -196,19 +186,16 @@ veille-ia/
 ### Services won't start
 ```bash
 # Check if ports are already in use
-sudo netstat -tulpn | grep -E '5678|5432|1200'
+sudo netstat -tulpn | grep -E '5678|5433'
 
 # Check Docker logs
 ./scripts/logs.sh all
 ```
 
 ### No articles received on Discord
-- Verify `DISCORD_WEBHOOK_URL` is correctly set in `.env`
-- Articles only sent if:
-  - Published within last 2 hours
-  - Match AI keywords (defined in n8n workflow)
-  - Not already in database
-- Test manually in n8n: Execute workflow button
+- Verify the `DISCORD_WEBHOOK_*` variables and `DISCORD_ALLOWED_AUTHORS` in `.env`
+- Articles are only posted if published within 48 h, scored (confidence ≥ 85, score ≥ 60) and not posted yet
+- Check scoring progresses: `SELECT count(*) FILTER (WHERE gemini_confidence IS NOT NULL), count(*) FROM rss_articles;`
 
 ### Database connection errors
 ```bash
@@ -222,24 +209,23 @@ docker compose exec postgres pg_isready -U n8n -d veille_ia
 ## Important Notes
 
 - **Deduplication period**: 90 days (configurable in purge function)
-- **Notification frequency**: Every 2 hours (configurable in n8n Schedule Trigger)
+- **Collection frequency**: every 30 min (`Every 30 Minutes` node); posting happens on mention
 - **Time zone**: Europe/Paris (configurable in .env TZ variable)
 - **Backup location**: `./backups/` directory
 - **n8n workflows**: Stored in `./data/n8n/` (backed up automatically)
 
 ## Workflow Customization
 
-### Change notification frequency
-Edit n8n workflow → Schedule Trigger node → Modify cron expression:
-- `0 */2 * * *` = every 2 hours (default)
-- `0 */4 * * *` = every 4 hours
-- `0 9,18 * * *` = at 9am and 6pm only
+### Change collection frequency / thresholds
+- `Every 30 Minutes` node: schedule
+- `Claim Unscored` node: Gemini batch size (`[25]`)
+- `Claim Top Articles` node: `[min score, max per channel]` (`[60, 5]`)
 
 ### Add/modify AI keywords
-Edit n8n workflow → "Code - Filtrer mots-clés" node → Modify `aiKeywords` array
+Edit `keywords_ai` in `rss_sources.json` (used by the prefilter of feeds with `"prefilter": true`)
 
 ### Enable/disable RSS sources
-Edit `rss_sources.json` → Set `"active": true/false` → Restart services
+Edit `rss_sources.json` → Set `"active": true/false` (re-read on every run, no restart needed)
 
 ## Monitoring & Maintenance
 

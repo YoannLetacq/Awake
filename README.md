@@ -1,35 +1,34 @@
 # Veille IA
 
-A self-hosted AI/ML news monitoring pipeline. Triggered on demand by an `@mention` of a Discord bot, the pipeline collects RSS feeds, deduplicates against PostgreSQL, scores and summarises articles with Gemini, and posts grouped embeds to up to four Discord webhooks.
+A self-hosted AI/ML news monitoring pipeline. A scheduled job collects RSS feeds and Reddit every 30 minutes, deduplicates them in PostgreSQL and scores each new article once with a single batched Gemini call. An `@mention` of the Discord bot then only reads the database: it claims the best unsent articles and posts them as grouped embeds to up to four Discord webhooks in about a second.
 
 ## Architecture
 
 ```
+Every 30 minutes (Schedule Trigger)
+    -> Load rss_sources.json -> Reddit API (OAuth, one combined request) -> RSS feeds
+    -> Prepare Candidates: 48h window, keyword prefilter on general feeds,
+       URL normalization, in-run dedup, 20 newest per feed
+    -> INSERT ... ON CONFLICT (url) DO NOTHING
+    -> Claim up to 25 unscored rows (max 3 attempts each)
+       -> ONE Gemini call (structured JSON) -> save confidence/score/summary
+    -> purge_old_articles()
+
 Discord @mention
-    -> n8n workflow (single execution, Redis-locked)
-        -> Load rss_sources.json
-        -> Read 25+ RSS feeds (parallel)
-        -> Date filter (2 days), categorize, dedup against PostgreSQL
-        -> Gemini call (relevance + summary in one round-trip)
-        -> Group by source_type, top-N per group
-        -> Format Discord embeds, POST to per-group webhooks
-        -> UPDATE rss_articles.sent_at = NOW()
-        -> Release lock
+    -> Authorize Mention (deny by default)
+    -> Claim Top Articles: one UPDATE ... RETURNING, at most 5 per channel,
+       confidence >= 85, score >= 60, ranked by score + source priority, no repeated title
+    -> Format Embeds -> Discord webhooks   (or "Rien de nouveau" reply)
 ```
 
-The lock uses Redis (via Webdis) with the n8n `$execution.id` as a fencing token; release is a Lua compare-and-delete so a stale execution cannot wipe a newer lock. Lock TTL is 15 minutes.
-
-Articles are inserted only after passing the Gemini relevance gate (`confidence >= 85`). `sent_at` is set after the Discord POST succeeds, so the database can distinguish queued, evaluated, and actually-sent rows.
+Every article is scored exactly once, rejected ones included, so the Gemini cost depends on the number of new articles, not on the number of mentions. The claim query replaces the old Redis lock: under READ COMMITTED a concurrent mention re-checks `sent_at IS NULL` and skips rows another claim already took.
 
 ## Components
 
-| Service   | Image                      | Purpose                                            | Host port      |
-|-----------|----------------------------|----------------------------------------------------|----------------|
-| postgres  | `postgres:16-alpine`       | Article store, dedup, stats, retention             | `127.0.0.1:5433` |
-| n8n       | `n8nio/n8n:latest`         | Workflow runtime                                   | `127.0.0.1:5678` |
-| rsshub    | `diygod/rsshub:latest`     | Custom RSS feed generator (optional)               | `127.0.0.1:1200` |
-| redis     | `redis:7-alpine`           | Lock backend (no auth, internal network only)      | internal       |
-| webdis    | `nicolas/webdis:latest`    | HTTP wrapper around Redis (used by n8n HTTP nodes) | internal       |
+| Service   | Image                | Purpose                                | Host port        |
+|-----------|----------------------|----------------------------------------|------------------|
+| postgres  | `postgres:16-alpine` | Article store, dedup, scores, retention | `127.0.0.1:5433` |
+| n8n       | `n8nio/n8n:2.1.4`    | Workflow runtime                       | `127.0.0.1:5678` |
 
 All published ports bind to `127.0.0.1`. To expose any service to the network, put it behind a reverse proxy with TLS and authentication.
 
@@ -40,8 +39,13 @@ All published ports bind to `127.0.0.1`. To expose any service to the network, p
 ├── docker-compose.yml          # Service orchestration
 ├── env.template                # Configuration template
 ├── rss_sources.json            # RSS sources (single source of truth)
-├── workflow-simplified.json    # Current n8n workflow
+├── workflow-simplified.json    # n8n workflow (built, import this into n8n)
+├── n8n/
+│   ├── code/                   # Code node sources (one file per node)
+│   └── sql/                    # Postgres node queries (one file per node)
+├── tests/                      # node --test suites + sql.test.sh
 ├── scripts/
+│   ├── build-workflow.mjs      # Inlines n8n/code and n8n/sql into the workflow JSON
 │   ├── setup.sh                # First-run setup (.env + dirs)
 │   ├── start.sh, stop.sh, restart.sh, status.sh, logs.sh
 │   ├── backup.sh, restore.sh
@@ -78,7 +82,19 @@ chmod +x scripts/*.sh
 ./scripts/status.sh
 ```
 
-Open n8n at <http://localhost:5678>, create the owner account, then import `workflow-simplified.json`. Wire the Postgres credential and the Discord Bot Trigger credential. See [QUICKSTART.md](QUICKSTART.md) for the full first-run procedure.
+Open n8n at <http://localhost:5678>, create the owner account, then import `workflow-simplified.json`. Wire three credentials:
+
+- **Postgres** on every Postgres node.
+- **Discord Bot Trigger** on `Discord Bot mention1`.
+- **Reddit OAuth2** on `Reddit Fetch`: create a "script" app at <https://www.reddit.com/prefs/apps>, then in n8n add an *OAuth2 API* credential with grant type *Client Credentials*, access token URL `https://www.reddit.com/api/v1/access_token`, the app's client ID and secret, and authentication *Header*. The secret stays in n8n's encrypted credential store.
+
+### Upgrading an existing database
+
+`init.sql` is idempotent. On a database created before the scheduled pipeline, run it once more: it adds the scoring columns and marks every legacy row as sent and already scored, so nothing old is re-scored or re-posted.
+
+```bash
+docker compose exec -T postgres psql -U n8n veille_ia < scripts/init.sql
+```
 
 ## Configuration
 
@@ -93,27 +109,34 @@ All runtime settings live in `.env`. Key variables:
 | `DISCORD_WEBHOOK_COMPANIES`    | yes      | |
 | `DISCORD_WEBHOOK_REDDIT`       | yes      | |
 | `DISCORD_WEBHOOK_OTHERS`       | yes      | |
-| `DISCORD_ALLOWED_AUTHORS`      | no       | Comma-separated user IDs allowed to trigger. Empty = anyone in the configured channels. |
+| `DISCORD_ALLOWED_AUTHORS`      | yes      | Comma-separated user IDs allowed to trigger. Empty = every mention is ignored. |
 | `GEMINI_API_KEY`               | yes      | |
-| `GEMINI_MODEL`                 | no       | Defaults to `gemini-pro`. `gemini-2.0-flash` is a good cost/latency trade-off. |
+| `GEMINI_MODEL`                 | no       | Defaults to `gemini-3.1-flash-lite`. |
 | `POSTGRES_PORT`                | no       | Host-side port. Defaults to `5433` to avoid colliding with a local Postgres. |
 | `TZ`                           | no       | Defaults to `Europe/Paris`. |
 
-The list of n8n-visible env vars is whitelisted via `N8N_ENV_VARS` in `docker-compose.yml`. Add new variables there as well as in the env section of the n8n service.
+Add new variables to the env section of the n8n service in `docker-compose.yml`.
+
+Tuning knobs live in the workflow: the schedule (`Every 30 Minutes`), the Gemini batch size (`Claim Unscored`, 25), and the posting thresholds (`Claim Top Articles`: minimum score 60, 5 articles per channel).
 
 ## RSS sources
 
 `rss_sources.json` is mounted read-only into the n8n container at `/home/node/rss_sources.json`. The workflow reloads it on every execution, so changes take effect immediately without restarting n8n. Each entry has `url`, `name`, `category`, `priority`, and `active`. Set `"active": false` to disable a source.
+
+- `category` picks the Discord channel: AI Companies / AI Research -> Companies, Tech News / Tech Community / Development / Mainstream Media / French Tech -> Tech News, everything else -> Others.
+- `priority` (high / medium / low) adds +10 / 0 / -10 to the Gemini score when ranking.
+- `"prefilter": true` keeps only items matching `keywords_ai` (or the words AI / IA / ML) before they reach Gemini. Use it on general-purpose feeds.
+- The `reddit` block lists the subreddits fetched in one OAuth request (`top` of the day). Reddit's public RSS rate-limits per IP, hence the API.
 
 ## Database
 
 Schema is in `scripts/init.sql` and is applied automatically on the first PostgreSQL start. Notable details:
 
 - `rss_articles.url` is unique. INSERTs use `ON CONFLICT (url) DO NOTHING`.
-- `sent_at` is `NULL` at insert and set to `NOW()` only after a successful Discord post. `purge_old_articles()` deletes by `COALESCE(sent_at, created_at) < NOW() - INTERVAL '90 days'`.
+- `gemini_confidence` / `gemini_score` are `NULL` until scored; `score_attempts` caps retries at 3.
+- `sent_at` is set when a mention claims the article. `purge_old_articles()` runs on every scheduled run and deletes by `COALESCE(sent_at, created_at) < NOW() - INTERVAL '90 days'`.
 - `article_stats` view exposes total / sent / 24h / 7d counts.
 - `get_source_stats()` returns per-source counts.
-- `filter_new_urls(text[])` and `check_url_duplicates_json(jsonb)` are helpers for n8n dedup queries.
 
 Connect from the host:
 
@@ -129,10 +152,13 @@ docker compose exec postgres psql -U n8n veille_ia
 | Stop               | `./scripts/stop.sh`                  |
 | Restart            | `./scripts/restart.sh`               |
 | Status + stats     | `./scripts/status.sh`                |
-| Tail logs          | `./scripts/logs.sh {n8n,postgres,rsshub,all}` |
+| Tail logs          | `./scripts/logs.sh {n8n,postgres,all}` |
 | Backup DB+workflows| `./scripts/backup.sh`                |
 | Restore            | `./scripts/restore.sh`               |
 | Manual purge       | `SELECT purge_old_articles();` in psql |
+
+| Run the tests      | `node --test tests/*.test.mjs && bash tests/sql.test.sh` |
+| Rebuild workflow   | `node scripts/build-workflow.mjs` after editing `n8n/code` or `n8n/sql` |
 
 A daily backup can be scheduled with cron:
 
@@ -142,10 +168,11 @@ A daily backup can be scheduled with cron:
 
 ## Security notes
 
-- All host port bindings are restricted to `127.0.0.1`. Webdis is internal-only and unauthenticated; do not publish it.
+- All host port bindings are restricted to `127.0.0.1`.
 - n8n is owner-on-first-setup. Create the owner account before exposing the host.
-- `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` is required because Code nodes need `$env`. The exposure is bounded by the `N8N_ENV_VARS` whitelist; review it before adding new env vars.
-- Set `DISCORD_ALLOWED_AUTHORS` to the user IDs of operators if the trigger channels are not fully trusted.
+- `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` is required because nodes read `$env`. `N8N_ENV_VARS` is not an n8n setting and restricts nothing: every variable of the n8n container is readable from workflow code. Moving the keys into n8n credentials would let this be set to `true`.
+- All SQL runs with positional parameters (`$1..$n`); RSS text reaches Gemini inside `<article>` tags flagged as untrusted, and summaries are stripped of links and mentions before posting.
+- `DISCORD_ALLOWED_AUTHORS` must list the operators' user IDs; the bot ignores everyone when it is empty.
 - The `.env` file is git-ignored. Keep it that way.
 
 ## Troubleshooting
@@ -153,8 +180,8 @@ A daily backup can be scheduled with cron:
 The most common failure modes and their fixes are documented in [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). A quick checklist:
 
 - Bot does not react to mention: verify the `MESSAGE CONTENT` intent and the channel IDs in the `Discord Bot mention1` node.
-- "Already running" loop: a lock is stuck. `docker compose exec redis redis-cli DEL veille_lock`.
-- Gemini `MAX_TOKENS` or `429`: switch `GEMINI_MODEL` to `gemini-2.0-flash` or `gemini-2.5-flash`.
+- Bot replies "Rien de nouveau" every time: check that the scheduled branch runs (n8n executions list) and that `SELECT count(*) FROM rss_articles WHERE gemini_confidence IS NOT NULL` grows.
+- Gemini `402` / `429`: the call fails softly, rows stay unscored and are retried on the next run (3 attempts max). Check the AI Studio billing / quota.
 - `relation "rss_articles" does not exist`: `init.sql` was not applied. `docker compose down -v && ./scripts/start.sh` (this destroys data).
 
 ## License
