@@ -2,8 +2,8 @@
 
 ## Symptom
 
-Discord nodes (both the built-in Discord node and the community Discord Trigger)
-failed with:
+Outbound calls from n8n (the Discord bot trigger and webhooks, Reddit, RSS feeds,
+Gemini) failed with:
 
 > The DNS server returned an error, perhaps the server is offline
 
@@ -28,7 +28,8 @@ Direct IP egress also failed because `wget` still needs DNS for SNI/hosts.
 
 ## Fix
 
-Add explicit public resolvers to the `n8n` service in `docker-compose.yml`:
+The `n8n` service in `docker-compose.yml` already sets explicit public resolvers.
+Keep this block:
 
 ```yaml
   n8n:
@@ -40,7 +41,7 @@ Add explicit public resolvers to the `n8n` service in `docker-compose.yml`:
 
 This bypasses Docker's embedded resolver for this container.
 
-Apply with:
+After any change to this block, apply it with:
 
 ```bash
 docker compose up -d n8n
@@ -53,12 +54,13 @@ $ docker compose exec n8n getent hosts discord.com
 162.159.128.233   discord.com
 ```
 
-Discord node calls succeed again.
+Outbound calls from n8n succeed again.
 
 ## Notes
 
-- If other containers that need outbound HTTPS (e.g. `rsshub`) hit the same
-  symptom, add the same `dns:` block to them.
-- Unrelated warning seen during the investigation:
-  `The "DISCORD_WEBHOOK_URL" variable is not set` — make sure it is defined in
-  `.env`, otherwise webhook delivery will silently target an empty URL.
+- `n8n` is the only container that makes outbound HTTPS calls; `postgres`
+  does not need the `dns:` block.
+- Make sure the four channel variables `DISCORD_WEBHOOK_TECH_NEWS`,
+  `DISCORD_WEBHOOK_COMPANIES`, `DISCORD_WEBHOOK_REDDIT` and
+  `DISCORD_WEBHOOK_OTHERS` are defined in `.env`. An empty one silently stops
+  posting to that channel: its articles stay unsent in the database.
