@@ -33,7 +33,7 @@ for var in DISCORD_WEBHOOK_TECH_NEWS DISCORD_WEBHOOK_COMPANIES DISCORD_WEBHOOK_R
     value=$(env_value "$var")
     is_missing=0
     case "$value" in
-        "" | *YOUR_*) is_missing=1 ;;
+        "" | *YOUR_* | *VOTRE_*) is_missing=1 ;;
     esac
     if [[ $var == DISCORD_WEBHOOK_* ]] && [[ ! $value =~ $WEBHOOK_RE ]]; then
         is_missing=1

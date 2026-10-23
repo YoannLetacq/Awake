@@ -123,10 +123,9 @@ docker compose logs n8n
 #### 1. N8N_ENCRYPTION_KEY invalide
 
 ```bash
-# Vérifier .env
-grep N8N_ENCRYPTION_KEY .env
+# Vérifier .env sans afficher la clé (doit faire 64 caractères hex)
+grep -qE '^N8N_ENCRYPTION_KEY=[0-9a-fA-F]{64}$' .env && echo "OK : N8N_ENCRYPTION_KEY valide" || echo "N8N_ENCRYPTION_KEY absente ou invalide"
 
-# Doit être 64 caractères hex
 # Si invalide, régénérer :
 openssl rand -hex 32
 
@@ -564,7 +563,8 @@ docker compose up -d
 
 # 3. Santé containers
 docker compose ps
-docker inspect <container-name>
+# État seulement : sans --format, docker inspect affiche aussi les variables d'environnement (secrets de .env)
+docker inspect --format '{{.Name}} {{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' <container-name>
 
 # 4. Tester connectivité
 # PostgreSQL

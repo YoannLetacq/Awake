@@ -206,7 +206,7 @@ DISCORD_WEBHOOK_OTHERS=https://discord.com/api/webhooks/VOTRE_ID/VOTRE_TOKEN
 
 # 2. QUI PEUT MENTIONNER LE BOT : identifiants Discord séparés par des virgules
 #    Liste vide = toutes les mentions sont ignorées
-DISCORD_ALLOWED_AUTHORS=ID_UTILISATEUR_1,ID_UTILISATEUR_2
+DISCORD_ALLOWED_AUTHORS=VOTRE_ID_UTILISATEUR_1,VOTRE_ID_UTILISATEUR_2
 
 # 3. CLÉ API GEMINI (https://aistudio.google.com/apikey)
 GEMINI_API_KEY=VOTRE_CLE_GEMINI
@@ -229,13 +229,17 @@ Sauvegarder :
 ### 3. Vérifier la Configuration
 
 ```bash
-# Lister les variables requises vides ou encore au modèle YOUR_ (aucune valeur affichée)
+# Lister les variables requises vides ou encore au modèle YOUR_ ou VOTRE_ (aucune valeur affichée)
 for v in DISCORD_BOT_TOKEN DISCORD_WEBHOOK_TECH_NEWS DISCORD_WEBHOOK_COMPANIES DISCORD_WEBHOOK_REDDIT DISCORD_WEBHOOK_OTHERS DISCORD_ALLOWED_AUTHORS GEMINI_API_KEY; do
-  grep -qE "^$v=.+" .env && ! grep -qE "^$v=.*YOUR_" .env || echo "$v non configuré"
+  grep -qE "^$v=.+" .env && ! grep -qE "^$v=.*(YOUR_|VOTRE_)" .env || echo "$v non configuré"
 done
 
-# Vérifier que les mots de passe sont générés
-grep PASSWORD .env | grep -v "CHANGEME"
+# Vérifier que les mots de passe sont générés (noms des variables seulement, jamais les valeurs)
+if grep -qE '^[A-Z_]*PASSWORD=(CHANGEME|$)' .env; then
+  grep -E '^[A-Z_]*PASSWORD=(CHANGEME|$)' .env | cut -d= -f1 | sed 's/^/Non généré : /'
+else
+  echo "OK : mots de passe générés"
+fi
 
 # Si "CHANGEME" apparaît encore, relancer setup
 ./scripts/setup.sh
@@ -257,7 +261,7 @@ Une variable signalée « non configuré » déclenche un avertissement au déma
 Le script se place dans le répertoire du projet, puis exécute ces étapes dans l'ordre :
 
 1. **Contrôle de `.env`** : si le fichier est absent, il affiche `❌ Fichier .env introuvable !` et `   Lancez d'abord: ./scripts/setup.sh`, puis s'arrête (code de sortie 1).
-2. **Contrôle de sept variables** : `DISCORD_WEBHOOK_TECH_NEWS`, `DISCORD_WEBHOOK_COMPANIES`, `DISCORD_WEBHOOK_REDDIT`, `DISCORD_WEBHOOK_OTHERS`, `DISCORD_BOT_TOKEN`, `DISCORD_ALLOWED_AUTHORS` et `GEMINI_API_KEY`. Une variable est signalée si elle est vide ou contient encore `YOUR_`. Les quatre `DISCORD_WEBHOOK_*` sont aussi signalées si leur valeur n'a pas la forme d'une URL de webhook Discord (`https://discord.com/api/webhooks/<id>/<token>`). Chaque variable signalée produit une ligne d'avertissement ; la valeur n'est jamais affichée.
+2. **Contrôle de sept variables** : `DISCORD_WEBHOOK_TECH_NEWS`, `DISCORD_WEBHOOK_COMPANIES`, `DISCORD_WEBHOOK_REDDIT`, `DISCORD_WEBHOOK_OTHERS`, `DISCORD_BOT_TOKEN`, `DISCORD_ALLOWED_AUTHORS` et `GEMINI_API_KEY`. Une variable est signalée si elle est vide ou contient encore `YOUR_` ou `VOTRE_`. Les quatre `DISCORD_WEBHOOK_*` sont aussi signalées si leur valeur n'a pas la forme d'une URL de webhook Discord (`https://discord.com/api/webhooks/<id>/<token>`). Chaque variable signalée produit une ligne d'avertissement ; la valeur n'est jamais affichée.
 3. **Confirmation** : s'il y a au moins une variable signalée, le script demande `Continuer quand même ? (y/N)`. Seule la touche `y` ou `Y` poursuit le démarrage. Toute autre touche, Entrée comprise, arrête le script (code de sortie 1) sans lancer Docker.
 4. **Lancement** : `docker compose up -d`. Si cette commande échoue, le script s'arrête.
 5. **Attente** : 30 secondes fixes (`sleep 30`), sans contrôle de l'état des services.
