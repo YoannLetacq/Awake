@@ -1,5 +1,6 @@
 // Build one batched Gemini generateContent request for every claimed article.
-// An empty claim still reaches us as n8n's [{json:{success:true}}]: skip anything without an id.
+// An empty claim reaches us as no item at all or as n8n's [{json:{success:true}}], depending on the
+// statement: skip anything without an id.
 const rows = $input.all().filter(({ json }) => Number.isInteger(json.id));
 if (rows.length === 0) return [];
 // Article data must never be able to open or close an <article> tag.
