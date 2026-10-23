@@ -20,10 +20,32 @@ if [ ! -f .env ]; then
     exit 1
 fi
 
-# Vérifier que Discord webhook est configuré
-if grep -q "YOUR_WEBHOOK_ID" .env; then
-    echo "⚠️  WARNING: DISCORD_WEBHOOK_URL n'est pas configuré dans .env"
-    echo "   Les notifications Discord ne fonctionneront pas."
+# Read one variable from .env without sourcing the file or printing its value
+env_value() {
+    sed -n "s/^$1=//p" .env | tail -n 1 \
+        | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
+}
+
+# Discord and Gemini variables must be filled in; a webhook must match the Discord URL shape
+WEBHOOK_RE='^https://(discord|discordapp)\.com/api/webhooks/[0-9]+/[0-9A-Za-z_-]+$'
+MISSING_COUNT=0
+for var in DISCORD_WEBHOOK_TECH_NEWS DISCORD_WEBHOOK_COMPANIES DISCORD_WEBHOOK_REDDIT DISCORD_WEBHOOK_OTHERS DISCORD_BOT_TOKEN DISCORD_ALLOWED_AUTHORS GEMINI_API_KEY; do
+    value=$(env_value "$var")
+    is_missing=0
+    case "$value" in
+        "" | *YOUR_*) is_missing=1 ;;
+    esac
+    if [[ $var == DISCORD_WEBHOOK_* ]] && [[ ! $value =~ $WEBHOOK_RE ]]; then
+        is_missing=1
+    fi
+    if [ "$is_missing" -eq 1 ]; then
+        echo "⚠️  WARNING: $var n'est pas configuré dans .env"
+        MISSING_COUNT=$((MISSING_COUNT + 1))
+    fi
+done
+
+if [ "$MISSING_COUNT" -gt 0 ]; then
+    echo "   Les fonctionnalités liées à ces variables ne fonctionneront pas."
     echo ""
     read -p "Continuer quand même ? (y/N) " -n 1 -r
     echo
