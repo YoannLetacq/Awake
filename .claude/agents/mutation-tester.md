@@ -9,10 +9,10 @@ color: orange
 
 <!-- INSTANCIE:
 le:     2026-10-23
-base:   2e4bce8                 HEAD mesuré ; docs/ modifiés non commités, hors des suites
-suite:  Ran 65 / failures=0 / skipped=0 (node --test) · sql.test.sh 32 PASS / 0 FAIL, exit 0
+base:   21393d0                 HEAD mesuré, arbre propre ; faits re-mesurés après 2e4bce8
+suite:  Ran 68 / failures=0 / skipped=0 (node --test) · sql.test.sh 35 PASS / 0 FAIL, exit 0
 gates:  node --test tests/*.test.mjs · bash tests/sql.test.sh · aucun lint ni audit déclaré (pas de package.json, pas de CI)
-par:    sous-agent d'instanciation, brief du 2026-10-23
+par:    sous-agent d'instanciation (ré-instanciation), brief du 2026-10-23
 -->
 
 # Agent de tests de mutation
@@ -75,13 +75,13 @@ local peut y exécuter le code du dépôt.
 
 ### 2. Le harnais avant les résultats
 
-**Harnais de ce dépôt, mesuré le 2026-10-23 (HEAD `2e4bce8`).** Rejoue-le avant de lire un seul zéro.
+**Harnais de ce dépôt, mesuré le 2026-10-23 (HEAD `21393d0`, arbre propre).** Rejoue-le avant de lire un seul zéro.
 
-- `node --test tests/*.test.mjs` : **65 tests, 65 pass, 0 fail, 0 skipped**. `# skipped` est une ligne à part : lis-la. Environ 1 s.
-- `bash tests/sql.test.sh` : **32 PASS, 0 FAIL**, `All checks PASSED`, exit 0. Environ 15 s, sur un conteneur `postgres:16-alpine` jetable (`veille-sqltest-<pid>`). Aucune sélection de check : un tour joue le fichier entier.
-- **Dégradé** : `TZ` absent, `TZ=Europe/Paris` et `env -i` donnent 65/65 et 0 sauté dans les trois cas, soit un écart nul. Docker injoignable (`DOCKER_HOST` invalide) fait **abandonner** `sql.test.sh` en exit 125, sans aucun PASS ni FAIL : c'est un échec dur, jamais un saut. Lis l'exit code, pas seulement les PASS.
+- `node --test tests/*.test.mjs` : **68 tests, 68 pass, 0 fail, 0 skipped**. `# skipped` est une ligne à part : lis-la. Moins d'une seconde (0,2 s mesurées).
+- `bash tests/sql.test.sh` : **35 PASS, 0 FAIL**, `All checks PASSED`, exit 0. Environ 20 s (21 s mesurées), sur un conteneur `postgres:16-alpine` jetable (`veille-sqltest-<pid>`, supprimé en fin de run). Aucune sélection de check : un tour joue le fichier entier.
+- **Dégradé** : `TZ` absent et `TZ=Europe/Paris` donnent 68/68 et 0 sauté. `env -i` (aucun PATH) donne **67 pass, 1 fail, 0 sauté** : « workflow JSON is in sync… » (`workflow.test.mjs:17`) tombe sur `spawnSync node ENOENT`, parce que le test lance `node` par son nom (`workflow.test.mjs:19`) et que l'hôte n'a node ni dans `/usr/bin` ni dans `/usr/local/bin`. C'est un rouge, pas un saut : exige 0 FAIL, y compris en dégradé. Docker injoignable (`DOCKER_HOST` invalide) fait **abandonner** `sql.test.sh` en exit 125, sans aucun PASS ni FAIL : c'est un échec dur, jamais un saut. Lis l'exit code, pas seulement les PASS.
 - Aucun échec préexistant. Aucun saut conditionnel : `skip:` est absent de `tests/`. Une ligne `FAIL`, un `skipped` supérieur à 0 ou un exit différent de 0 est un rouge nouveau.
-- **Pièges d'outillage mesurés.** Le shell est **zsh** (`/usr/bin/zsh`) : une variable non quotée ne se découpe pas en mots, donc `$cmd node …` avec `cmd="env -u TZ"` rend exit 127. Utilise `bash -c '…'` ou des tableaux. `$TMPDIR` est vide dans ce harnais : `> $TMPDIR/x` vise la racine et est refusé ; écris dans le scratchpad de session. `sql.test.sh` rend 0 après une erreur SQL des blocs `{ … } | sql DB` : il imprime `SQL_ERROR:` sur stdout, et rien ne le compte en FAIL.
+- **Pièges d'outillage mesurés.** Le shell est **zsh** (`/usr/bin/zsh`) : une variable non quotée ne se découpe pas en mots, donc `$cmd node …` avec `cmd="env -u TZ"` rend exit 127. Utilise `bash -c '…'` ou des tableaux. `$TMPDIR` est vide dans ce harnais : `> $TMPDIR/x` vise la racine et est refusé ; écris dans le scratchpad de session. Une erreur SQL non attendue est comptée en FAIL depuis `1650827` : `sql()` la journalise et le script sort en 1 (mesuré dans une copie : une fonction absente dans `claim-top-articles.sql` donne « 23 check(s) FAILED », exit 1). Un check qui attend une erreur le déclare par `EXPECT_SQL_ERROR=1` ; aucun check ne le fait aujourd'hui (mesuré).
 
 **Avant** la première mutation, prouve que ta commande fonctionne :
 
@@ -272,20 +272,24 @@ L'incident 4 est né de l'oubli de cette phrase.
 
 ---
 
-## Faits de ce dépôt (instanciés le 2026-10-23, base 2e4bce8)
+## Faits de ce dépôt (instanciés le 2026-10-23, base 21393d0)
 
-**Suite de référence.** `node --test tests/*.test.mjs` : 65/65, 0 saut, environ 1 s. `bash tests/sql.test.sh` : 32/32, exit 0, environ 14 à 18 s. **Aucun échec attendu** : une base rouge serait un signal, pas un état normal. Coût d'un tour : `node --test tests/gemini.test.mjs` (un fichier, environ 1 s) ; `sql.test.sh` joue son fichier entier, sans sélection de check.
+**Suite de référence.** `node --test tests/*.test.mjs` : 68/68, 0 saut, moins d'une seconde (0,2 s mesurées). `bash tests/sql.test.sh` : 35/35, exit 0, environ 20 s (21 s mesurées). **Aucun échec attendu** : une base rouge serait un signal, pas un état normal. Coût d'un tour : `node --test tests/prepare-candidates.test.mjs` (un fichier, moins d'une seconde) ; `sql.test.sh` joue son fichier entier, sans sélection de check.
 
-**Isolement.** `n8n/`, `scripts/` et `tests/` sont propres dans l'arbre à `2e4bce8` (mesuré par `git status`). Mute une **copie** du dossier (`cp -r tests scripts n8n <scratchpad>/`), jamais l'arbre. `git checkout -- <fichier>` restaure HEAD : sans perte ici, puisque ces fichiers sont propres, mais travaille quand même sur une copie.
+**Isolement.** `n8n/`, `scripts/` et `tests/` sont propres dans l'arbre à `21393d0` (`git status` vide, mesuré le 2026-10-23). Mute une **copie** du dossier (`cp -r tests scripts n8n <scratchpad>/`), jamais l'arbre. `git checkout -- <fichier>` restaure HEAD : sans perte ici, puisque ces fichiers sont propres, mais travaille quand même sur une copie.
 
-**Purge de cache.** Sans objet mesuré : aucun `enableCompileCache` ni `NODE_COMPILE_CACHE` dans `tests/`, `n8n/` ou `scripts/`. Reconfirme si l'un apparaît.
+**Purge de cache.** Sans objet mesuré : aucun `enableCompileCache` ni `NODE_COMPILE_CACHE` dans `tests/`, `n8n/` ou `scripts/` (reconfirmé le 2026-10-23). Reconfirme si l'un apparaît.
 
 **Pièges de cette campagne (mesurés).**
-1. **Tués par la synchro, pas par le comportement.** Une mutation dans `n8n/code/*.js` ou `n8n/sql/*.sql` sans rebuild casse `workflow.test.mjs:17` avant toute suite de comportement. Compte ces tués à part, ou reconstruis le JSON dans la copie (`node scripts/build-workflow.mjs`) avant de lancer.
-2. **Tué par la mauvaise ligne (check f).** La promesse « a later row whose title was already sent is never returned » est tuée par la ligne `f/2`, perdante restée non envoyée, et non par la ligne nommée `f/3`, que `insert-candidates.sql` refuse. Mesuré : retirer la clause `NOT EXISTS` de `claim-top-articles.sql` fait échouer le check avec `got [2|https://f.example/2|…]`. Le compte de tués est juste, la justification ne l'est pas : applique §4.5 et §6.
-3. **Erreur comptée nulle part.** Les blocs `{ … } | sql DB` de check f impriment `SQL_ERROR: no rows returned for \gset` alors que le run finit `All checks PASSED`, exit 0. Une mutation qui casse l'ingestion peut laisser la campagne verte : cherche `SQL_ERROR`, `INIT_ERROR` et `MISSING` dans la sortie, pas seulement `FAIL`.
-4. **Fenêtre non pinnée (mesuré).** `inWindow` passée à 49 h au lieu de 48 h : `prepare-candidates.test.mjs` reste 28/28 vert. Mutation survivante, à déclarer comme telle.
+1. **Tués par la synchro, pas par le comportement.** Une mutation dans `n8n/code/*.js` ou `n8n/sql/*.sql` sans rebuild casse `workflow.test.mjs:17` avant toute suite de comportement (mesuré dans une copie : `MAX_EMBEDS` passé de 10 à 9 dans `format-embeds.js`, sans rebuild : « workflow JSON is in sync » tombe). Compte ces tués à part, ou reconstruis le JSON dans la copie (`node scripts/build-workflow.mjs`) avant de lancer.
+2. **Tué par sa ligne nommée (check f), depuis `1650827`.** Retirer le `NOT EXISTS` (règle du titre déjà envoyé) de `claim-top-articles.sql` fait échouer « f: a row whose title was already sent is never claimed » (got `[3|https://f.example/4|CLAUDE SHIPS THING|…]`) et « f: and it stays unsent » : 2 checks FAILED, 33 PASS (mesuré dans une copie). Contrôle positif candidat, §3.
+3. **Erreur SQL comptée.** Depuis `1650827`, une erreur SQL non attendue sort en FAIL : une fonction absente (`nowx()`) dans `claim-top-articles.sql` donne « 23 check(s) FAILED », exit 1 (mesuré dans une copie). Une mutation qui casse l'ingestion fait donc échouer la campagne ; lis quand même les `FAIL unexpected` de la sortie.
+4. **Fenêtre 49 h (mesuré dans une copie).** `NOW - 48 * HOUR_MS` passé à 49 h dans `prepare-candidates.js` : seul « the 48h window is exact… » tombe (28 pass, 1 fail sur `prepare-candidates.test.mjs`). Tué par un seul test : note-le comme kill fragile (§6).
 
-**Promesses déjà écrites, à dériver en §4.2.** Les commentaires `// Fails if …` et `// mutation: …` de `discord.test.mjs` (`:111`, `:161`), de `gemini.test.mjs` (`:129`, `:190`) et de `prepare-candidates.test.mjs` (`:87`, `:109`, `:110`, `:431`, `:444`), ainsi que les en-têtes `# … Catches:` des blocs `a.` à `i.` de `sql.test.sh`.
+**Contrôles positifs candidats (mesurés, §3).** (a) `NOW - 48 * HOUR_MS` → `49 * HOUR_MS` dans `n8n/code/prepare-candidates.js` : tuée par « the 48h window is exact » seul. (b) Retirer le `AND NOT EXISTS (…)` de `n8n/sql/claim-top-articles.sql` : tuée par deux checks f. Les deux sont des mutations connues létales ; (b) est la seule qui touche la région du titre.
+
+**Survivant connu (mesuré) : échange de deux champs positionnels.** Dans `workflow-simplified.json`, échanger `$json.title` et `$json.description` dans le paramètre de `Insert Candidates` (édition textuelle, pas un `json.dump` qui reformate et fait échouer `--check`) laisse `node --test tests/*.test.mjs` à 68/68 et `build-workflow.mjs --check` à 0. Aucun test ne lie `$1..$7` à l'ordre des colonnes de `insert-candidates.sql`. Une campagne doit le déclarer comme survivant, avec le test qui le tuerait : évaluer le `queryReplacement` de `Insert Candidates` sur une ligne fixe, comme `workflow.test.mjs:88` le fait pour Claim Top Articles, et exiger `$1` = l'URL, `$2` = le titre.
+
+**Promesses déjà écrites, à dériver en §4.2.** Les commentaires `// Fails if …` et `// mutation: …` de `discord.test.mjs` (`:111`, `:131`, `:145` à `:149`, `:173` à `:175`), de `gemini.test.mjs` (`:129`, `:190`) et de `prepare-candidates.test.mjs` (`:87`, `:109`, `:110`, `:124`, `:126`, `:444`, `:457`), ainsi que les en-têtes `# … Catches:` des blocs `a.` à `i.` de `sql.test.sh` (10 occurrences).
 
 **Non mesuré.** Les mutants équivalents ; la durée d'une campagne complète sur les deux suites.

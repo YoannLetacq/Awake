@@ -9,10 +9,10 @@ color: cyan
 
 <!-- INSTANCIE:
 le:     2026-10-23
-base:   2e4bce8                 HEAD mesuré ; docs/ modifiés non commités, hors des suites
-suite:  Ran 65 / failures=0 / skipped=0 (node --test) · sql.test.sh 32 PASS / 0 FAIL, exit 0
+base:   21393d0                 HEAD mesuré, arbre propre ; faits re-mesurés après 2e4bce8
+suite:  Ran 68 / failures=0 / skipped=0 (node --test) · sql.test.sh 35 PASS / 0 FAIL, exit 0
 gates:  node --test tests/*.test.mjs · bash tests/sql.test.sh · aucun lint ni audit déclaré (pas de package.json, pas de CI)
-par:    sous-agent d'instanciation, brief du 2026-10-23
+par:    sous-agent d'instanciation (ré-instanciation), brief du 2026-10-23
 -->
 
 # Agent de simulation des dépendances
@@ -87,13 +87,13 @@ Un mock absent est souvent remplacé par un **saut conditionnel**, et les compte
 tests incluent généralement les tests sautés. Une suite se lit alors « verte à
 l'identique » en ayant sauté précisément ce qui gardait le diff.
 
-**Harnais de ce dépôt, mesuré le 2026-10-23 (HEAD `2e4bce8`).** Rejoue-le avant de lire un seul zéro.
+**Harnais de ce dépôt, mesuré le 2026-10-23 (HEAD `21393d0`, arbre propre).** Rejoue-le avant de lire un seul zéro.
 
-- `node --test tests/*.test.mjs` : **65 tests, 65 pass, 0 fail, 0 skipped**. `# skipped` est une ligne à part : lis-la. Environ 1 s.
-- `bash tests/sql.test.sh` : **32 PASS, 0 FAIL**, `All checks PASSED`, exit 0. Environ 15 s, sur un conteneur `postgres:16-alpine` jetable (`veille-sqltest-<pid>`). Aucune sélection de check : un tour joue le fichier entier.
-- **Dégradé** : `TZ` absent, `TZ=Europe/Paris` et `env -i` donnent 65/65 et 0 sauté dans les trois cas, soit un écart nul. Docker injoignable (`DOCKER_HOST` invalide) fait **abandonner** `sql.test.sh` en exit 125, sans aucun PASS ni FAIL : c'est un échec dur, jamais un saut. Lis l'exit code, pas seulement les PASS.
+- `node --test tests/*.test.mjs` : **68 tests, 68 pass, 0 fail, 0 skipped**. `# skipped` est une ligne à part : lis-la. Moins d'une seconde (0,2 s mesurées).
+- `bash tests/sql.test.sh` : **35 PASS, 0 FAIL**, `All checks PASSED`, exit 0. Environ 20 s (21 s mesurées), sur un conteneur `postgres:16-alpine` jetable (`veille-sqltest-<pid>`, supprimé en fin de run). Aucune sélection de check : un tour joue le fichier entier.
+- **Dégradé** : `TZ` absent et `TZ=Europe/Paris` donnent 68/68 et 0 sauté. `env -i` (aucun PATH) donne **67 pass, 1 fail, 0 sauté** : « workflow JSON is in sync… » (`workflow.test.mjs:17`) tombe sur `spawnSync node ENOENT`, parce que le test lance `node` par son nom (`workflow.test.mjs:19`) et que l'hôte n'a node ni dans `/usr/bin` ni dans `/usr/local/bin`. C'est un rouge, pas un saut : exige 0 FAIL, y compris en dégradé. Docker injoignable (`DOCKER_HOST` invalide) fait **abandonner** `sql.test.sh` en exit 125, sans aucun PASS ni FAIL : c'est un échec dur, jamais un saut. Lis l'exit code, pas seulement les PASS.
 - Aucun échec préexistant. Aucun saut conditionnel : `skip:` est absent de `tests/`. Une ligne `FAIL`, un `skipped` supérieur à 0 ou un exit différent de 0 est un rouge nouveau.
-- **Pièges d'outillage mesurés.** Le shell est **zsh** (`/usr/bin/zsh`) : une variable non quotée ne se découpe pas en mots, donc `$cmd node …` avec `cmd="env -u TZ"` rend exit 127. Utilise `bash -c '…'` ou des tableaux. `$TMPDIR` est vide dans ce harnais : `> $TMPDIR/x` vise la racine et est refusé ; écris dans le scratchpad de session. `sql.test.sh` rend 0 après une erreur SQL des blocs `{ … } | sql DB` : il imprime `SQL_ERROR:` sur stdout, et rien ne le compte en FAIL.
+- **Pièges d'outillage mesurés.** Le shell est **zsh** (`/usr/bin/zsh`) : une variable non quotée ne se découpe pas en mots, donc `$cmd node …` avec `cmd="env -u TZ"` rend exit 127. Utilise `bash -c '…'` ou des tableaux. `$TMPDIR` est vide dans ce harnais : `> $TMPDIR/x` vise la racine et est refusé ; écris dans le scratchpad de session. Une erreur SQL non attendue est comptée en FAIL depuis `1650827` : `sql()` la journalise et le script sort en 1 (mesuré dans une copie : une fonction absente dans `claim-top-articles.sql` donne « 23 check(s) FAILED », exit 1). Un check qui attend une erreur le déclare par `EXPECT_SQL_ERROR=1` ; aucun check ne le fait aujourd'hui (mesuré).
 
 
 Relève le nombre de tests **sautés** et exige la valeur de référence. Et **si le diff
@@ -197,26 +197,26 @@ Fichier indiqué par le brief, puis **une seule ligne** : chemin + verdict.
 
 ---
 
-## Faits de ce dépôt (instanciés le 2026-10-23, base 2e4bce8)
+## Faits de ce dépôt (instanciés le 2026-10-23, base 21393d0)
 
 **Dépendances externes comptées** (recherche mesurée dans `tests/`).
-- Doubles : `tests/harness.mjs` (`$()`, `$env`, `this.helpers`, `console` muet) est importé par **4 fichiers sur 4** (`discord`, `gemini`, `prepare-candidates`, `workflow`). Le module `mock` de `node:test` n'apparaît dans **aucun** fichier.
-- Sous-processus : `workflow.test.mjs:17` lance `node scripts/build-workflow.mjs --check` (réel, un fichier). `sql.test.sh` lance `docker` (réel, Postgres jetable, ce n'est pas un double).
-- Réseau réel : **aucun** appel depuis les tests (ni `fetch`, ni `http(s)`). Les `https://example.com/…` et `https://discord.test/…` sont des données.
-- **Facturé** : Gemini (`generativelanguage.googleapis.com`, un appel par run, lot de 25 au plus, `retryOnFail: true`, clé `GEMINI_API_KEY`, modèle `GEMINI_MODEL`). Aucun test ne l'appelle ; six tests inspectent le corps de la requête (`gemini.test.mjs:18` à `:79`).
+- Doubles : `tests/harness.mjs` (`$()`, `$env`, `this.helpers`, `console` muet) est importé par **4 fichiers sur 4** (`discord`, `gemini`, `prepare-candidates`, `workflow`). Le module `mock` de `node:test` n'est importé par **aucun** fichier (mesuré : `grep "import.*mock"` vide).
+- Sous-processus : `workflow.test.mjs:19` lance `node scripts/build-workflow.mjs --check` (réel, un fichier ; `node` est résolu par le PATH, pas par `process.execPath`). `sql.test.sh` lance `docker` (réel, Postgres jetable, ce n'est pas un double).
+- Réseau réel : **aucun** appel depuis les tests (ni `fetch`, ni `http(s)`). Les `https://example.com/…` et `https://discord.com/api/webhooks/…` sont des données.
+- **Facturé** : Gemini (`generativelanguage.googleapis.com`, un appel par run, lot de 25 au plus, `Claim Unscored` lit `[25]`, `retryOnFail: true`, `maxTries: 3`, clé `GEMINI_API_KEY`, modèle `GEMINI_MODEL`). Aucun test ne l'appelle ; six tests inspectent le corps de la requête (`gemini.test.mjs:18` à `:79`).
 - Non simulés, et jamais exécutés : Reddit OAuth (`reddit_url` sur `oauth.reddit.com`), le nœud `RSS Read`, les webhooks Discord (`Send to Discord`, un par canal) et `Reply Nothing New` (REST Discord). Les nœuds HTTP ne tournent dans aucune suite : seul leur JSON est testé (`workflow.test.mjs`).
 - Sauts conditionnels : **0** (mesuré : aucun `skip:` dans `tests/`). Un saut neuf dans le diff est un constat TEST-003 en soi.
-- Horloge : `prepare-candidates.test.mjs` construit les dates **relativement à `Date.now()`**, sans horloge figée ; les fixtures restent à 1 h des bornes.
-- `discord.test.mjs:8` pose `process.env.TZ = 'UTC'`. Aucun effet mesuré sur les autres fichiers : `TZ` absent, `Europe/Paris` et `env -i` donnent 65/65.
+- Horloge : `prepare-candidates.test.mjs` construit les dates **relativement à `Date.now()`**, sans horloge figée. Les fixtures de la borne 48 h sont à 1 min (47 h 59 et 48 h 01, `:123`) ; celles de `:108` sont à 47 h, 3 jours, +30 min et +2 h.
+- `discord.test.mjs:8` pose `process.env.TZ = 'UTC'`. Aucun effet mesuré sur les autres fichiers : `TZ` absent et `Europe/Paris` donnent 68/68 ; `env -i` donne 67/68, et le rouge vient de `node` introuvable sans PATH, pas de `TZ` (voir le harnais).
 
 **Fidélité : ce qui se vérifie hors ligne, ce qui ne se vérifie pas.**
-- `authorId` : **vérifié** contre la source installée (`DiscordTrigger.node.js:87`).
+- `authorId` : **vérifié** contre la source installée (`DiscordTrigger.node.js:87`, mesuré le 2026-10-23 : `authorId: author.id,`).
 - Gemini (`candidates[0].content.parts[].text`), listing Reddit (`kind`, `data.children[].data`), items RSS (`pairedItem`, `pubDate`, `isoDate`) : **aucune capture réelle** dans le dépôt. Le verdict de fidélité est « non vérifié hors ligne » tant que la documentation officielle n'a pas été consultée. N'écris jamais « vérifié » pour ces trois formes.
 - `data/n8n` (monté dans le conteneur n8n) contient l'état local de n8n : ne l'ouvre pas sans besoin explicite.
 
 **Modes de défaillance déjà payés, classes.**
-- `2e4bce8` (2026-10-23) : une mention lançait 25 appels de flux et un appel Gemini par article, de 15 à 60 s, souvent en échec sur un 429. Classe : **appel facturé sur un déclencheur synchrone**. Gardée structurellement par `workflow.test.mjs:75` (le chemin mention ne fait que lire la base).
+- `2e4bce8` (2026-10-23) : une mention lançait 25 appels de flux en série et un appel Gemini par article, de 15 à 60 s, souvent en échec sur un 429 (corps du commit). Classe : **appel facturé sur un déclencheur synchrone**. Gardée structurellement par `workflow.test.mjs:75` (le chemin mention ne fait que lire la base).
 - `6b080f8` (2026-10-23) : allow-list vide, donc n'importe qui déclenchait des runs payants. Classe : **dépense ouverte**. Gardée par `discord.test.mjs:26`.
-- `c5cdbb5` (2026-10-23) : arXiv représentait environ 60 % des tokens Gemini ; le RSS public de Reddit renvoie 429 (passage à OAuth). Classe : **volume et quota non bornés**. Gardée par les caps (`prepare-candidates.test.mjs:271` et `:346`) et par le prefilter.
+- `c5cdbb5` (2026-10-23) : arXiv représentait environ 60 % des tokens Gemini ; le RSS public de Reddit renvoie 429 (passage à OAuth). Classe : **volume et quota non bornés**. Gardée par les caps (`prepare-candidates.test.mjs:284` et `:359`) et par le prefilter.
 
 **Ce que tu ne peux pas mesurer ici** : la fidélité de Gemini, Reddit et RSS à leurs API réelles, et le rendu des webhooks Discord. Dis-le dans la colonne « fidélité vérifiée contre quoi ».
