@@ -28,7 +28,7 @@ Guide complet pour maintenir votre système de veille IA en bon état.
 
 **Indicateurs de santé :**
 - ✅ Tous les containers "running"
-- ✅ Articles envoyés dans les dernières 24h > 0
+- ✅ Articles collectés dans les dernières 24h > 0, et scorés (`gemini_confidence` renseigné)
 - ✅ Aucune erreur critique dans les logs
 - ✅ Utilisation disque < 80%
 
@@ -43,12 +43,14 @@ Guide complet pour maintenir votre système de veille IA en bon état.
 ./scripts/backup.sh
 
 # Sortie :
-# ✅ backups/veille_ia_20241209_143022.sql (PostgreSQL)
-# ✅ backups/n8n_data_20241209_143022.tar.gz (Workflows)
+# ✅ backups/veille_ia_20241209_143022.sql (PostgreSQL : données, workflows n8n, credentials chiffrés)
+# ✅ backups/n8n_data_20241209_143022.tar.gz (fichiers locaux n8n)
 # ✅ backups/env_20241209_143022.bak (Configuration)
 ```
 
 **Fréquence recommandée :** Quotidien
+
+> ⚠️ Les archives `env_*.bak` contiennent vos secrets (`.env`). Protégez le dossier `backups/` et chiffrez toute copie envoyée hors du serveur. Les credentials n8n sont chiffrés avec `N8N_ENCRYPTION_KEY` : une restauration exige le `.env` de la même installation.
 
 ### Backup Automatique
 
@@ -182,7 +184,7 @@ GROUP BY source
 ORDER BY total DESC
 LIMIT 10;
 
--- Articles dernières 24h
+-- Articles envoyés (mention Discord) dernières 24h
 SELECT COUNT(*) FROM rss_articles
 WHERE sent_at > NOW() - INTERVAL '24 hours';
 
@@ -249,6 +251,8 @@ docker compose up -d
 ./scripts/status.sh
 ```
 
+> ⚠️ n8n est épinglé à une version précise dans `docker-compose.yml` : `docker compose pull` ne le met pas à jour. Changez ce tag seulement après un test.
+
 **Fréquence recommandée :** Mensuelle
 
 ### Mise à Jour du Code
@@ -266,9 +270,14 @@ git pull origin main
 # Restaurer config si écrasée
 cp .env.backup .env
 
-# Redémarrer
-./scripts/restart.sh
+# Recréer les conteneurs (up et non restart : restart ne relit pas .env)
+docker compose up -d
+
+# Appliquer le schéma s'il a changé (idempotent)
+docker compose exec -T postgres psql -U n8n veille_ia < scripts/init.sql
 ```
+
+Si `workflow-simplified.json` a changé : importer le fichier dans n8n (**Import from File**), reconfigurer ses credentials, puis désactiver et supprimer l'ancien workflow (deux workflows actifs s'exécutent en parallèle).
 
 ### Rollback en Cas de Problème
 
@@ -316,6 +325,8 @@ REINDEX TABLE rss_articles;
 ```
 
 #### Purge Manuelle (> 90 jours)
+
+La purge tourne automatiquement à chaque run planifié (toutes les 30 minutes) ; cette commande la force.
 
 ```bash
 # Via fonction SQL
@@ -460,8 +471,8 @@ echo "🏥 Health Check Système Veille IA"
 echo "=================================="
 
 # Containers
-if [ $(docker compose ps -q | wc -l) -eq 3 ]; then
-  echo "✅ Containers: OK (3/3)"
+if [ $(docker compose ps -q | wc -l) -eq 2 ]; then
+  echo "✅ Containers: OK (2/2)"
 else
   echo "❌ Containers: ERREUR"
 fi

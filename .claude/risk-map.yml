@@ -1,0 +1,385 @@
+# Risk map for veille_auto: .claude/risk-map.yml
+#
+# This file defines NO rule_id. Every rule_id cited here lives in the norm
+# (~/gouvernance/rules.yml, the kit's rules.yml link). Do not invent any.
+#
+# Three scales coexist in this corpus; this file speaks only of the first one:
+#   - PR risk: ROUTINE / STANDARD / SENSITIVE (this file)
+#   - finding severity: BLOCKER / HIGH / MEDIUM / LOW / NIT (not here)
+#   - agent action risk: Low ... Critical (not here)
+#
+# Reading rule: the FIRST matching motif wins. Specific motifs come first, "**" last.
+# ROUTINE needs TWO conditions: a ROUTINE motif AND the path listed in risk.routine_allowlist.
+# A PR's level is the HIGHEST level of any path it touches. It is computed from this map
+# (RISK-002), never declared by hand.
+#
+# Reference classified: branch feat/precompute-pipeline (HEAD, PR #1), not origin/main.
+# Entries tagged [PR #1] target files absent from origin/main: they arrive with the PR.
+# [PR #1, uncommitted] targets .claude/, which is created outside git.
+
+version: "1.0"
+statut: actif
+etabli_le: "2026-10-23"
+
+risk.map:
+  # --- Agent definitions and this map: they change which checks run ---
+  - motif: ".claude/**"
+    niveau: SENSITIVE
+    categorie: infrastructure_et_ci_cd
+    motif_du_classement: >
+      [PR #1, uncommitted] Review-agent definitions and this risk map. Changing them changes
+      which agents run and which level every PR receives. No test in the repo reads them.
+
+  - motif: "CLAUDE.md"
+    niveau: SENSITIVE
+    categorie: infrastructure_et_ci_cd
+    motif_du_classement: >
+      Decided by the owner (2026-10-23): SENSITIVE kept. Instructions every agent reads, with
+      precedence over the conduct file. A removed line can drop a gate instruction (for example the
+      preflight step) and no test reads this file. Rejected alternative: project documentation
+      (ROUTINE or STANDARD).
+
+  # --- Infrastructure: containers, deployment, startup ---
+  - motif: "docker-compose.yml"
+    niveau: SENSITIVE
+    categorie: infrastructure_et_ci_cd
+    motif_du_classement: >
+      Container topology: loopback port bindings, pinned n8n image, DNS resolvers, and
+      N8N_BLOCK_ENV_ACCESS_IN_NODE=false, which lets workflow code read every $env value.
+      The only test on this file (tests/workflow.test.mjs) asserts that redis, webdis and rsshub
+      are absent. A port opened to 0.0.0.0 or a dropped variable is not caught before a real start.
+
+  - motif: "scripts/start.sh"
+    niveau: SENSITIVE
+    categorie: infrastructure_et_ci_cd
+    motif_du_classement: >
+      Starts the stack (docker compose up -d) after checking that .env exists. A removed check
+      starts containers with empty secrets. No test covers this script.
+
+  - motif: "scripts/stop.sh"
+    niveau: SENSITIVE
+    categorie: infrastructure_et_ci_cd
+    motif_du_classement: >
+      Stops the stack (docker compose down). An added option changes what is removed for the whole
+      stack. No test covers this script.
+
+  - motif: "scripts/restart.sh"
+    niveau: SENSITIVE
+    categorie: infrastructure_et_ci_cd
+    motif_du_classement: >
+      Restarts every container, which interrupts the schedule and the Discord bot in production.
+      No test covers this script.
+
+  - motif: "scripts/rss-sources.sh"
+    niveau: SENSITIVE
+    categorie: infrastructure_et_ci_cd
+    motif_du_classement: >
+      The reload command restarts the n8n container (docker compose restart n8n) after a prompt.
+      No test covers this script.
+
+  # --- Secrets and configuration ---
+  - motif: "env.template"
+    niveau: SENSITIVE
+    categorie: cryptographie_et_secrets
+    motif_du_classement: >
+      Configuration template: it names the secret variables and their defaults. A real value left
+      as a default, or a pre-filled allow-list, is invisible to every test (none reads this file).
+      Only a deployment shows it.
+
+  - motif: ".gitignore"
+    niveau: SENSITIVE
+    categorie: cryptographie_et_secrets
+    motif_du_classement: >
+      Keeps .env, *.pem, *.key and the password files out of git. Removing a line breaks no test,
+      and the secret goes out with the next commit.
+
+  - motif: "scripts/setup.sh"
+    niveau: SENSITIVE
+    categorie: cryptographie_et_secrets
+    motif_du_classement: >
+      Generates the PostgreSQL password, the n8n encryption key and the Grafana password (openssl),
+      and installs Docker through a remote script (curl | sh). A weaker generator breaks no test.
+
+  - motif: "scripts/status.sh"
+    niveau: SENSITIVE
+    categorie: cryptographie_et_secrets
+    motif_du_classement: >
+      Decided by the owner (2026-10-23): SENSITIVE kept. Read-only, but it sources the whole .env with
+      set -a, so every secret is exported to child processes. Printing or logging a variable here
+      would leak secrets. No test covers it. Rejected alternative: STANDARD (read-only).
+
+  # --- Data: schema, writes, backups ---
+  - motif: "scripts/init.sql"
+    niveau: SENSITIVE
+    categorie: migrations_et_integrite_des_donnees
+    motif_du_classement: >
+      PostgreSQL schema: tables, indexes, functions and the 90-day purge (purge_old_articles), re-run
+      to upgrade an existing database. tests/sql.test.sh replays it on a throwaway Postgres 16, not on
+      the production database that holds the legacy rows.
+
+  - motif: "scripts/backup.sh"
+    niveau: SENSITIVE
+    categorie: migrations_et_integrite_des_donnees
+    motif_du_classement: >
+      Backup: pg_dump of the database, an archive of data/n8n, and a plaintext copy of .env written
+      into backups/. A broken dump is only discovered at restore time, and no test covers this script.
+
+  - motif: "scripts/restore.sh"
+    niveau: SENSITIVE
+    categorie: migrations_et_integrite_des_donnees
+    motif_du_classement: >
+      Overwrites the database with a SQL file (psql), after a safety backup and a y/N prompt.
+      Changing the order or the confirmation destroys data. No test restores a database.
+
+  - motif: "n8n/sql/claim-top-articles.sql"
+    niveau: SENSITIVE
+    categorie: migrations_et_integrite_des_donnees
+    motif_du_classement: >
+      [PR #1] UPDATE that sets sent_at and decides what gets posted (cross-source dedup, per-channel
+      cap). A relaxed condition posts an article twice or drops one. tests/sql.test.sh runs the
+      statement on a throwaway Postgres; it does not run the n8n scheduler.
+
+  - motif: "n8n/sql/claim-unscored.sql"
+    niveau: SENSITIVE
+    categorie: migrations_et_integrite_des_donnees
+    motif_du_classement: >
+      [PR #1] UPDATE that bumps score_attempts while selecting the rows to score (FOR UPDATE SKIP
+      LOCKED). A regression scores a row twice (cost) or breaks the attempt cap. Covered by
+      tests/sql.test.sh on a throwaway Postgres only.
+
+  - motif: "n8n/sql/insert-candidates.sql"
+    niveau: SENSITIVE
+    categorie: migrations_et_integrite_des_donnees
+    motif_du_classement: >
+      [PR #1] INSERT of candidates with URL dedup (ON CONFLICT DO NOTHING) and a skip for titles
+      already sent. Dropping a clause re-inserts sent articles. Covered by tests/sql.test.sh on a
+      throwaway Postgres only.
+
+  - motif: "n8n/sql/save-scores.sql"
+    niveau: SENSITIVE
+    categorie: migrations_et_integrite_des_donnees
+    motif_du_classement: >
+      [PR #1] UPDATE that stores one Gemini result by id. A widened WHERE overwrites scores across
+      the table. Covered by tests/sql.test.sh on a throwaway Postgres only.
+
+  - motif: "n8n/sql/**"
+    niveau: SENSITIVE
+    categorie: migrations_et_integrite_des_donnees
+    motif_du_classement: >
+      [PR #1] Fallback for a new Postgres node query: persistent writes by default, strictest level
+      until it is classified above.
+
+  # --- Workflow code and the deliverable built from it ---
+  - motif: "scripts/build-workflow.mjs"
+    niveau: SENSITIVE
+    categorie: composants_centraux_architecture
+    motif_du_classement: >
+      [PR #1] Inlines n8n/code and n8n/sql into workflow-simplified.json, the file that gets imported.
+      tests/workflow.test.mjs checks that the JSON is in sync; the behaviour of the imported
+      workflow inside n8n is not tested.
+
+  - motif: "workflow-simplified.json"
+    niveau: SENSITIVE
+    categorie: composants_centraux_architecture
+    motif_du_classement: >
+      The deliverable imported into n8n: Gemini, Postgres, Discord and Reddit nodes, with code
+      inlined. GENERATED from n8n/code and n8n/sql: a hand edit is overwritten by the next build, and
+      tests/workflow.test.mjs flags the desync. Source of truth: n8n/code and n8n/sql.
+
+  - motif: "n8n/code/authorize-mention.js"
+    niveau: SENSITIVE
+    categorie: autorisation_et_permissions
+    motif_du_classement: >
+      [PR #1] Access gate for the Discord bot: only authors listed in DISCORD_ALLOWED_AUTHORS are
+      processed, and an empty list denies all. tests/discord.test.mjs covers the empty list and the
+      filtering. Not covered: the real Discord trigger wiring inside n8n.
+
+  - motif: "n8n/code/build-gemini-request.js"
+    niveau: SENSITIVE
+    categorie: paiements_et_donnees_financieres
+    motif_du_classement: >
+      [PR #1] Builds the billed Gemini call (one batched request: input, response schema, token cap).
+      A change that grows the request, or weakens the untrusted-content wrapping, costs money or opens
+      prompt injection, with no visible error. tests/gemini.test.mjs covers the build; the billed call
+      itself is never made in tests.
+
+  - motif: "n8n/code/format-embeds.js"
+    niveau: SENSITIVE
+    categorie: cryptographie_et_secrets
+    motif_du_classement: >
+      [PR #1] Reads the Discord webhook URLs from $env (they are secrets) and builds every outgoing
+      payload. tests/discord.test.mjs covers routing, limits and allowed_mentions. Not covered: real
+      delivery to Discord, since tests make no network calls.
+
+  - motif: "n8n/code/load-config.js"
+    niveau: SENSITIVE
+    categorie: authentification
+    motif_du_classement: >
+      [PR #1] Loads rss_sources.json and builds the Reddit OAuth URL (oauth.reddit.com) that the
+      authenticated HTTP node sends with the bearer token. A URL pointed at another host would send
+      the token there, and the subreddit regex is the only guard. tests/workflow.test.mjs covers the
+      sanitised URL.
+
+  - motif: "n8n/code/parse-scores.js"
+    niveau: SENSITIVE
+    categorie: composants_centraux_architecture
+    motif_du_classement: >
+      [PR #1] Trust boundary: the LLM reply becomes persisted rows and Discord text. It applies the
+      gate (confidence >= 85 and score >= 60) and strips links and mentions. tests/gemini.test.mjs
+      covers ids, order, clamping and gating. Not covered: the coupling to the Claim Unscored node
+      inside n8n.
+
+  - motif: "n8n/code/prepare-candidates.js"
+    niveau: SENSITIVE
+    categorie: composants_centraux_architecture
+    motif_du_classement: >
+      [PR #1] Trust boundary: RSS and Reddit input is untrusted. This node normalises URLs, applies the
+      time window and prefilter, caps and deduplicates. tests/prepare-candidates.test.mjs covers the
+      pure logic. Not covered: the coupling to n8n nodes (pairedItem, $('Load Config')).
+
+  - motif: "n8n/code/**"
+    niveau: SENSITIVE
+    categorie: composants_centraux_architecture
+    motif_du_classement: >
+      [PR #1] Fallback for a new node code file: strictest level until it is classified above.
+
+  # --- Feeds: a trust decision, read at runtime ---
+  - motif: "rss_sources.json"
+    niveau: STANDARD
+    motif_du_classement: >
+      Decided by the owner (2026-10-23): STANDARD (business configuration), lowered from SENSITIVE
+      under autorite_derogation (RISK-005). Source list, read at runtime, so there is no copy to keep
+      in sync. Each active entry opens a content source whose text reaches the database, the Gemini
+      prompt and Discord. That text is fenced as untrusted data in the Gemini prompt and sanitized
+      (links and mentions stripped) before Discord, and adding a source is routine: a human review per
+      source change is not required. tests/workflow.test.mjs checks for known-dead feeds and for Reddit
+      going through OAuth, not for source trustworthiness. Scoring is one batched Gemini call per run,
+      of 25 articles at most, whatever the number of sources.
+
+  # --- Tests: the gate itself ---
+  - motif: "tests/**"
+    niveau: STANDARD
+    motif_du_classement: >
+      [PR #1] Decided by the owner (2026-10-23): STANDARD kept (norm default). The test suite is
+      the gate itself: a weakened or deleted test lets a regression pass silently. Rejected
+      alternative: SENSITIVE (infrastructure_et_ci_cd).
+
+  # --- ROUTINE: documentation only. Each path is also listed in risk.routine_allowlist ---
+  - motif: "README.md"
+    niveau: ROUTINE
+    motif_du_classement: >
+      Operator documentation. No runtime behaviour depends on it, and no code reads or copies it.
+
+  - motif: "docs/INSTALL.md"
+    niveau: ROUTINE
+    motif_du_classement: >
+      Installation guide read by people. No code reads or copies it.
+
+  - motif: "docs/MAINTENANCE.md"
+    niveau: ROUTINE
+    motif_du_classement: >
+      Maintenance guide read by people. No code reads or copies it.
+
+  - motif: "docs/TROUBLESHOOTING.md"
+    niveau: ROUTINE
+    motif_du_classement: >
+      Troubleshooting guide read by people. No code reads or copies it.
+
+  - motif: "docs/dns-fix.md"
+    niveau: ROUTINE
+    motif_du_classement: >
+      Note on the DNS workaround. The workaround itself lives in docker-compose.yml, which is
+      SENSITIVE. No code reads or copies this note.
+
+  - motif: "scripts/RSS-SOURCES.md"
+    niveau: ROUTINE
+    motif_du_classement: >
+      Usage guide for scripts/rss-sources.sh. No code reads or copies it.
+
+  - motif: "backups/.gitkeep"
+    niveau: ROUTINE
+    motif_du_classement: >
+      Empty placeholder that keeps backups/ in git. scripts/setup.sh touches it (creates it if
+      absent). No runtime behaviour depends on it.
+
+  # --- Norm default: any path not classified above ---
+  - motif: "**"
+    niveau: STANDARD
+    motif_du_classement: "Norm default (RISK-003, RISK-008): any path not classified above."
+
+risk.routine_allowlist:   # ROUTINE needs BOTH a ROUTINE motif AND membership here
+  - "README.md"
+  - "docs/INSTALL.md"
+  - "docs/MAINTENANCE.md"
+  - "docs/TROUBLESHOOTING.md"
+  - "docs/dns-fix.md"
+  - "scripts/RSS-SOURCES.md"
+  - "backups/.gitkeep"
+
+couverture_categories_sensibles:
+  # All eight categories are present in this repo. None is declared absent.
+  authentification:
+    present: true
+    chemins:
+      - "n8n/code/load-config.js"           # Reddit OAuth URL that carries the token
+      - "workflow-simplified.json"          # Discord trigger and Reddit OAuth2 credentials, wired in n8n
+  autorisation_et_permissions:
+    present: true
+    chemins:
+      - "n8n/code/authorize-mention.js"     # deny-by-default allow-list of Discord authors
+      - "n8n/code/format-embeds.js"         # allowed_mentions parse: [] blocks mention pings
+  donnees_personnelles_ou_sensibles:
+    present: true
+    chemins:
+      - "n8n/code/authorize-mention.js"     # Discord user IDs (authorId)
+      - "env.template"                      # DISCORD_ALLOWED_AUTHORS lists operator IDs
+  paiements_et_donnees_financieres:
+    present: true
+    chemins:
+      - "n8n/code/build-gemini-request.js"  # billed Gemini call
+      - "workflow-simplified.json"          # Gemini Score node
+      - "env.template"                      # GEMINI_API_KEY, GEMINI_MODEL
+      - "docker-compose.yml"                # GEMINI_API_KEY passed to n8n
+  cryptographie_et_secrets:
+    present: true
+    chemins:
+      - "scripts/setup.sh"
+      - "env.template"
+      - "docker-compose.yml"
+      - "n8n/code/format-embeds.js"         # webhook URLs read from $env
+      - "scripts/status.sh"                 # sources .env
+      - "scripts/backup.sh"                 # copies .env
+      - ".gitignore"
+  migrations_et_integrite_des_donnees:
+    present: true
+    chemins:
+      - "scripts/init.sql"
+      - "n8n/sql/claim-top-articles.sql"
+      - "n8n/sql/claim-unscored.sql"
+      - "n8n/sql/insert-candidates.sql"
+      - "n8n/sql/save-scores.sql"
+      - "scripts/backup.sh"
+      - "scripts/restore.sh"
+  infrastructure_et_ci_cd:
+    present: true
+    chemins:
+      - ".claude/**"
+      - "CLAUDE.md"
+      - "docker-compose.yml"
+      - "scripts/setup.sh"
+      - "scripts/start.sh"
+      - "scripts/stop.sh"
+      - "scripts/restart.sh"
+      - "scripts/rss-sources.sh"            # no .github/ CI workflow in the repo
+  composants_centraux_architecture:
+    present: true
+    chemins:
+      - "n8n/code/prepare-candidates.js"
+      - "n8n/code/parse-scores.js"
+      - "scripts/build-workflow.mjs"
+      - "workflow-simplified.json"
+
+autorite_derogation:   # who may LOWER a level or a severity (PROC-017, RISK-005)
+  - nom: "Yoann (repository owner)"
+    github: "YoannLetacq"                   # Decided by the owner (2026-10-23): login confirmed. Taken from the git remote URL.
+    chemins: ["**"]

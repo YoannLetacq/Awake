@@ -74,17 +74,18 @@ docker compose logs postgres
 
 **Causes possibles :**
 
-#### 1. Port 5432 déjà utilisé
+#### 1. Port hôte déjà utilisé
+
+Le port hôte de PostgreSQL est `POSTGRES_PORT` (5433 par défaut, publié sur `127.0.0.1`).
 
 ```bash
 # Vérifier
-sudo netstat -tlnp | grep 5432
+sudo netstat -tlnp | grep 5433
 # ou
-sudo lsof -i :5432
+sudo lsof -i :5433
 
-# Solution : Changer le port dans docker-compose.yml
-ports:
-  - "5433:5432"  # Utiliser 5433 à la place
+# Solution : choisir un autre port dans .env (POSTGRES_PORT=5434 par exemple), puis
+docker compose up -d
 ```
 
 #### 2. Données corrompues
@@ -122,10 +123,9 @@ docker compose logs n8n
 #### 1. N8N_ENCRYPTION_KEY invalide
 
 ```bash
-# Vérifier .env
-grep N8N_ENCRYPTION_KEY .env
+# Vérifier .env sans afficher la clé (doit faire 64 caractères hex)
+grep -qE '^N8N_ENCRYPTION_KEY=[0-9a-fA-F]{64}$' .env && echo "OK : N8N_ENCRYPTION_KEY valide" || echo "N8N_ENCRYPTION_KEY absente ou invalide"
 
-# Doit être 64 caractères hex
 # Si invalide, régénérer :
 openssl rand -hex 32
 
@@ -147,18 +147,18 @@ docker compose ps postgres
 
 ### ❌ "Webhook Discord error"
 
-**Cause :** DISCORD_WEBHOOK_URL mal configuré
+**Cause :** une variable `DISCORD_WEBHOOK_<SALON>` est vide ou erronée (`TECH_NEWS`, `COMPANIES`, `REDDIT` ou `OTHERS`). Un salon sans webhook ne reçoit aucun article : ses articles restent en attente en base (non marqués envoyés), sans erreur visible.
 
 **Solution :**
 ```bash
-# Vérifier .env
-grep DISCORD_WEBHOOK_URL .env
+# Vérifier .env (noms des variables seulement)
+grep -oE '^DISCORD_WEBHOOK_[A-Z_]+=' .env
 
 # Format correct :
-# https://discord.com/api/webhooks/1234567890/abcdef...
+# https://discord.com/api/webhooks/VOTRE_ID/VOTRE_TOKEN
 
-# Tester manuellement
-curl -X POST "$(grep DISCORD_WEBHOOK_URL .env | cut -d= -f2)" \
+# Tester manuellement (remplacer TECH_NEWS par le salon concerné)
+curl -X POST "$(grep '^DISCORD_WEBHOOK_TECH_NEWS=' .env | cut -d= -f2-)" \
   -H "Content-Type: application/json" \
   -d '{"content": "Test depuis terminal"}'
 
@@ -177,7 +177,7 @@ curl -X POST "$(grep DISCORD_WEBHOOK_URL .env | cut -d= -f2)" \
 docker compose exec postgres bash
 
 # Créer la base
-psql -U n8n -c "CREATE DATABASE veille_ia;"
+psql -U n8n -d postgres -c "CREATE DATABASE veille_ia;"
 
 # Charger le schéma
 psql -U n8n veille_ia < /docker-entrypoint-initdb.d/init.sql
@@ -271,14 +271,13 @@ curl http://localhost:5678
 
 **Solutions :**
 
-#### 1. Firewall bloque le port
+#### 1. Accès depuis un autre poste
+
+n8n est publié sur `127.0.0.1` : une règle de pare-feu ne l'ouvre pas, et ce n'est pas un problème sur la machine hôte. Depuis un autre poste, utilisez un tunnel SSH :
 
 ```bash
-# Ouvrir le port
-sudo ufw allow 5678/tcp
-
-# Vérifier
-sudo ufw status
+ssh -L 5678:localhost:5678 utilisateur@VPS_IP
+# Puis ouvrir http://localhost:5678 dans le navigateur
 ```
 
 #### 2. n8n pas démarré
@@ -291,18 +290,9 @@ docker compose logs n8n
 docker compose restart n8n
 ```
 
-#### 3. Accès depuis externe (VPS)
+#### 3. Accès depuis l'extérieur (VPS)
 
-```bash
-# Depuis votre machine locale
-curl http://VPS_IP:5678
-
-# Si timeout, vérifier :
-# 1. Firewall VPS
-sudo ufw status
-
-# 2. Firewall cloud provider (AWS Security Groups, etc.)
-```
+Un timeout depuis une machine distante est normal. Vérifiez d'abord que n8n répond sur le VPS (`curl http://localhost:5678`), puis utilisez le tunnel SSH du point 1.
 
 ### ❌ "Workflow execution timeout"
 
@@ -320,7 +310,7 @@ Dans n8n :
 
 **Solution :**
 
-Recréer les credentials :
+Recréer les credentials (détails dans [INSTALL.md](INSTALL.md#configuration-n8n)) :
 
 1. **Settings** → **Credentials**
 2. **PostgreSQL** :
@@ -328,23 +318,26 @@ Recréer les credentials :
    - Database: `veille_ia`
    - User: `n8n`
    - Password: (voir .env)
-3. **Discord Webhook** :
-   - URL: (voir .env)
+3. **Discord Bot Trigger** :
+   - Token du bot : (voir `DISCORD_BOT_TOKEN` dans .env)
+4. **OAuth2 API**, nom `Reddit OAuth2` :
+   - Grant Type: Client Credentials
+   - Access Token URL: `https://www.reddit.com/api/v1/access_token`
+   - Client ID / Client Secret : (app « script » sur reddit.com/prefs/apps)
+   - Authentication: Header
 
-### ❌ "Node 'RSS Feed Read' error: ETIMEDOUT"
+### ❌ "Node 'RSS Read' error: ETIMEDOUT" (ou « Reddit Fetch » en erreur)
 
-**Cause :** Source RSS indisponible ou trop lente
+**Cause :** Source RSS (ou Reddit) indisponible ou trop lente
+
+**Comportement :** les nœuds `RSS Read` et `Reddit Fetch` continuent en cas d'erreur : une source en panne n'arrête pas le run, l'erreur reste visible dans l'exécution.
 
 **Solutions :**
 
-1. **Augmenter timeout** :
-   - Dans le nœud RSS, ajouter timeout 30s
+1. **Désactiver la source** dans `rss_sources.json` :
+   - `"active": false` sur l'entrée concernée (le fichier est relu à chaque run, pas de redémarrage)
 
-2. **Désactiver source temporairement** :
-   - Double-cliquer nœud
-   - **Continue On Fail** → ON
-
-3. **Vérifier disponibilité** :
+2. **Vérifier disponibilité** :
 ```bash
 # Tester manuellement
 curl -I https://source-rss.com/feed
@@ -359,24 +352,24 @@ curl -k https://source-rss.com/feed
 
 ### ❌ "Discord webhook returned 404"
 
-**Cause :** URL webhook invalide ou supprimé
+**Cause :** URL webhook invalide ou webhook supprimé pour le salon concerné
 
 **Solution :**
 
 1. Vérifier sur Discord :
    - Salon → Modifier → Intégrations → Webhooks
-   - Le webhook "Veille IA" existe ?
+   - Le webhook "Veille IA" du salon existe ?
 
 2. Si supprimé, recréer :
    - Nouveau Webhook → Copier URL
-   - Mettre à jour .env
+   - Mettre à jour la variable `DISCORD_WEBHOOK_<SALON>` dans .env
 
 ```bash
 nano .env
-# Modifier DISCORD_WEBHOOK_URL
+# Modifier DISCORD_WEBHOOK_TECH_NEWS (ou le salon concerné)
 
-# Redémarrer n8n
-docker compose restart n8n
+# Appliquer : "up" et non "restart", qui ne relit pas .env
+docker compose up -d n8n
 ```
 
 ### ❌ "Discord webhook returned 429" (Rate limit)
@@ -385,38 +378,56 @@ docker compose restart n8n
 
 **Solution :**
 
-1. **Ajouter un délai entre messages** :
+Le volume est déjà borné : au plus 5 articles par salon et par mention (`Claim Top Articles`), regroupés en messages de 10 embeds maximum (`Format Embeds`).
 
-Dans n8n, ajouter nœud "Wait" entre articles :
-- 1 seconde entre chaque message
-
-2. **Grouper les articles** :
-
-Au lieu d'envoyer 1 embed par message, en envoyer 10 par message.
+Si le 429 persiste, ajouter un nœud "Wait" (1 seconde) entre "Format Embeds" et "Send to Discord".
 
 ### ❌ "Messages vides sur Discord"
 
-**Cause :** Format embed incorrect
+**Cause :** Payload refusé par Discord (HTTP 400) ou embed incomplet
 
 **Diagnostic :**
 
-Dans n8n, vérifier le nœud Discord :
+Dans n8n, ouvrir l'exécution du nœud "Send to Discord" : la réponse de Discord indique le champ en cause. Le payload est construit par le nœud "Format Embeds" :
 ```json
 {
+  "content": "...",
   "embeds": [{
     "title": "...",
+    "url": "...",
     "description": "...",
-    "url": "..."
+    "footer": { "text": "..." }
   }]
 }
 ```
 
 **Solution :**
 
-- `title` et `description` obligatoires
-- `title` max 256 caractères
-- `description` max 4096 caractères
+- `title` obligatoire, 256 caractères max (tronqué par "Format Embeds")
+- `description` obligatoire, 1000 caractères max dans ce workflow (Discord accepte 4096)
 - `url` doit être valide (http/https)
+- Un message contient au plus 10 embeds et 5800 caractères cumulés (titres, descriptions, pieds)
+
+### ❌ Le bot ne répond pas à la mention
+
+**Causes possibles :**
+
+1. Votre identifiant n'est pas dans `DISCORD_ALLOWED_AUTHORS` : la mention est ignorée sans réponse (comportement voulu, deny by default)
+2. L'intent **MESSAGE CONTENT** est désactivé dans le portail développeur
+3. Le serveur ou le salon n'est pas renseigné dans le nœud `Discord Bot mention1` (champs `guildIds` et `channelIds`)
+4. Variable modifiée dans `.env` sans recréer le conteneur : `docker compose up -d n8n`
+
+### ❌ Le bot répond toujours « Rien de nouveau »
+
+**Cause :** aucun article éligible (publié dans les 48 h, confiance ≥ 85, score ≥ 60, pas encore posté), ou scoring bloqué
+
+**Diagnostic :**
+```bash
+# Ce nombre doit augmenter à chaque run planifié
+docker compose exec postgres psql -U n8n veille_ia -c "SELECT count(*) FILTER (WHERE gemini_confidence IS NOT NULL) AS scores, count(*) AS total FROM rss_articles;"
+```
+
+Vérifier aussi que le run « Every 30 Minutes » réussit dans la liste des exécutions de n8n. Un échec Gemini (402, 429) laisse les articles non scorés : ils sont réessayés au prochain run, 3 tentatives au maximum. Consulter le quota sur AI Studio.
 
 ---
 
@@ -461,17 +472,13 @@ docker compose exec postgres psql -U n8n veille_ia -c "VACUUM ANALYZE;"
 docker compose exec postgres psql -U n8n veille_ia -c "REINDEX DATABASE veille_ia;"
 ```
 
-#### 3. Réduire fréquence scraping
+#### 3. Réduire fréquence de collecte
 
-Dans n8n, Schedule Trigger :
-- `0 */4 * * *` (toutes les 4h au lieu de 2h)
+Dans n8n, nœud "Every 30 Minutes" : passer à 60 minutes (ou plus). Les mentions Discord répondent toujours depuis la base : seule la fraîcheur des articles change.
 
 #### 4. Désactiver sources volumineuses
 
-Dans `rss_sources.json` :
-- ArXiv (beaucoup d'articles)
-- Towards Data Science
-- Reddit général
+Dans `rss_sources.json`, mettre `"active": false` sur les entrées de `sources` les plus volumineuses. Le bloc `reddit` a sa propre clé `active` et sa liste `subreddits`.
 
 ### 🐌 "PostgreSQL lent"
 
@@ -520,8 +527,8 @@ sudo echo "nameserver 8.8.8.8" >> /etc/resolv.conf
 
 **Solution :**
 
-Dans nœud RSS n8n :
-- **Ignore SSL Issues** → ON (temporaire)
+Dans le nœud **RSS Read** (Options) :
+- **Ignore SSL Issues** → ON (temporaire, dernier recours)
 
 Ou installer certificats :
 ```bash
@@ -556,14 +563,12 @@ docker compose up -d
 
 # 3. Santé containers
 docker compose ps
-docker inspect <container-name>
+# État seulement : sans --format, docker inspect affiche aussi les variables d'environnement (secrets de .env)
+docker inspect --format '{{.Name}} {{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' <container-name>
 
 # 4. Tester connectivité
 # PostgreSQL
 docker compose exec n8n sh -c 'nc -zv postgres 5432'
-
-# RSSHub
-curl http://localhost:1200
 
 # n8n
 curl http://localhost:5678
@@ -574,7 +579,7 @@ df -h
 docker stats --no-stream
 
 # 6. Ports ouverts
-sudo netstat -tlnp | grep -E '5678|5432|1200'
+sudo netstat -tlnp | grep -E '5678|5433'
 ```
 
 ---
@@ -596,9 +601,9 @@ rm -rf data/*
 # 4. Redémarrer from scratch
 ./scripts/start.sh
 
-# 5. Reconfigurer n8n
-# - Reimporter workflows
-# - Recréer credentials
+# 5. Reconfigurer n8n (voir INSTALL.md)
+# - Réimporter workflow-simplified.json
+# - Recréer les credentials : PostgreSQL, Discord Bot Trigger, Reddit OAuth2
 ```
 
 ---
@@ -611,8 +616,10 @@ Si aucune solution ne fonctionne :
 ```bash
 ./scripts/status.sh > debug.txt
 docker compose logs > logs.txt
-cat .env | grep -v PASSWORD >> debug.txt
+grep -oE '^[A-Z_0-9]+=' .env >> debug.txt   # noms des variables seulement
 ```
+
+   ⚠️ Ne joignez jamais `.env` ni les valeurs de ses variables à une issue : il contient le token du bot, la clé Gemini et les webhooks.
 
 2. **Ouvrir une issue GitHub** avec :
    - Version système (Ubuntu/Debian...)

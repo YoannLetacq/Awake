@@ -54,7 +54,9 @@ if [ ! -f .env ]; then
 
     echo "✅ Fichier .env créé avec mots de passe générés"
     echo ""
-    echo "⚠️  IMPORTANT : Éditer .env et ajouter votre DISCORD_WEBHOOK_URL"
+    echo "⚠️  IMPORTANT : Éditer .env et renseigner les variables suivantes :"
+    echo "   DISCORD_WEBHOOK_TECH_NEWS, DISCORD_WEBHOOK_COMPANIES, DISCORD_WEBHOOK_REDDIT,"
+    echo "   DISCORD_WEBHOOK_OTHERS, DISCORD_BOT_TOKEN, DISCORD_ALLOWED_AUTHORS, GEMINI_API_KEY"
     echo ""
 else
     echo "ℹ️  Fichier .env existe déjà, pas de modification."
@@ -86,7 +88,9 @@ echo ""
 
 echo "📋 PROCHAINES ÉTAPES"
 echo "===================="
-echo "1. Éditer .env et ajouter votre DISCORD_WEBHOOK_URL"
+echo "1. Éditer .env et renseigner les variables suivantes :"
+echo "   DISCORD_WEBHOOK_TECH_NEWS, DISCORD_WEBHOOK_COMPANIES, DISCORD_WEBHOOK_REDDIT,"
+echo "   DISCORD_WEBHOOK_OTHERS, DISCORD_BOT_TOKEN, DISCORD_ALLOWED_AUTHORS, GEMINI_API_KEY"
 echo "2. Lancer: ./scripts/start.sh"
 echo "3. Accéder à n8n: http://localhost:5678"
 echo "4. Créer vos workflows dans l'interface n8n"

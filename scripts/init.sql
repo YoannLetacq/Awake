@@ -118,87 +118,6 @@ $$ LANGUAGE plpgsql;
 -- FONCTIONS DE DÉDUPLICATION POUR N8N
 -- ==========================================
 
--- Fonction 1: Filtrer les URLs nouvelles (retourne seulement les URLs non présentes en base)
-CREATE OR REPLACE FUNCTION filter_new_urls(urls_to_check TEXT[])
-RETURNS TABLE(url TEXT) AS $$
-BEGIN
-    RETURN QUERY
-    SELECT u.val as url
-    FROM unnest(urls_to_check) u(val)
-    WHERE NOT EXISTS (SELECT 1 FROM rss_articles a WHERE a.url = u.val);
-END;
-$$ LANGUAGE plpgsql;
-
--- Fonction 2: Vérifier les doublons avec détails (retourne le statut de chaque URL)
-CREATE OR REPLACE FUNCTION check_url_duplicates(urls_to_check TEXT[])
-RETURNS TABLE(
-    url TEXT,
-    is_new BOOLEAN,
-    existing_id INTEGER,
-    existing_created_at TIMESTAMP WITH TIME ZONE,
-    existing_sent_at TIMESTAMP WITH TIME ZONE
-) AS $$
-BEGIN
-    RETURN QUERY
-    SELECT
-        u.url::TEXT,
-        (a.id IS NULL) as is_new,
-        a.id as existing_id,
-        a.created_at as existing_created_at,
-        a.sent_at as existing_sent_at
-    FROM unnest(urls_to_check) u(url)
-    LEFT JOIN rss_articles a ON a.url = u.url::TEXT;
-END;
-$$ LANGUAGE plpgsql;
-
--- Fonction 2b: Version JSONB pour n8n (RECOMMANDÉE)
-CREATE OR REPLACE FUNCTION check_url_duplicates_json(urls_json JSONB)
-RETURNS TABLE(
-    url TEXT,
-    is_new BOOLEAN,
-    existing_id INTEGER,
-    existing_created_at TIMESTAMP WITH TIME ZONE,
-    existing_sent_at TIMESTAMP WITH TIME ZONE
-) AS $$
-BEGIN
-    RETURN QUERY
-    SELECT
-        u.url::TEXT,
-        (a.id IS NULL) as is_new,
-        a.id as existing_id,
-        a.created_at as existing_created_at,
-        a.sent_at as existing_sent_at
-    FROM jsonb_array_elements_text(urls_json) u(url)
-    LEFT JOIN rss_articles a ON a.url = u.url::TEXT;
-END;
-$$ LANGUAGE plpgsql;
-
--- Fonction 3: Traiter un batch d'articles en JSON (pour workflow n8n complet)
-CREATE OR REPLACE FUNCTION process_rss_batch(articles_json JSONB)
-RETURNS TABLE(
-    url TEXT,
-    is_new BOOLEAN,
-    should_process BOOLEAN,
-    article_data JSONB
-) AS $$
-BEGIN
-    RETURN QUERY
-    WITH incoming AS (
-        SELECT
-            value->>'url' as url,
-            value as data
-        FROM jsonb_array_elements(articles_json)
-    )
-    SELECT
-        i.url,
-        (a.url IS NULL) as is_new,
-        (a.url IS NULL) as should_process,
-        i.data as article_data
-    FROM incoming i
-    LEFT JOIN rss_articles a ON a.url = i.url;
-END;
-$$ LANGUAGE plpgsql;
-
 -- Fonction 4: Stats de déduplication (monitoring)
 CREATE OR REPLACE FUNCTION get_deduplication_stats()
 RETURNS TABLE(
@@ -222,6 +141,45 @@ $$ LANGUAGE plpgsql;
 INSERT INTO execution_logs (workflow_name, execution_status, articles_found, articles_sent)
 VALUES ('database_init', 'success', 0, 0);
 
+-- MIGRATION: scoring pipeline columns (idempotent).
+-- Runs once: while score_attempts exists, nothing below touches any row.
+-- Legacy rows were already posted, so they are marked sent and exhausted
+-- (score_attempts = 3): they are never scored nor posted again.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'rss_articles'
+          AND column_name = 'score_attempts'
+    ) THEN
+        ALTER TABLE rss_articles
+            ADD COLUMN prio SMALLINT NOT NULL DEFAULT 0,
+            ADD COLUMN gemini_confidence SMALLINT,
+            ADD COLUMN gemini_score SMALLINT,
+            ADD COLUMN ai_tag VARCHAR(8),
+            ADD COLUMN ai_summary TEXT,
+            ADD COLUMN ai_takeaway TEXT,
+            ADD COLUMN score_attempts SMALLINT NOT NULL DEFAULT 0;
+
+        UPDATE rss_articles
+        SET sent_at = COALESCE(sent_at, created_at),
+            score_attempts = 3;
+    END IF;
+END $$;
+
+-- MIGRATION: scoring lease (idempotent). Outside the guard above, so a database
+-- migrated before the lease existed gets it too. claim-unscored.sql sets it and skips
+-- rows leased less than 15 minutes ago.
+ALTER TABLE rss_articles ADD COLUMN IF NOT EXISTS scoring_started_at TIMESTAMP WITH TIME ZONE;
+
+-- Dedup helpers replaced by insert-candidates.sql (ON CONFLICT). Dropped so that
+-- live databases lose them too. Argument types must match the old signatures.
+DROP FUNCTION IF EXISTS filter_new_urls(TEXT[]);
+DROP FUNCTION IF EXISTS check_url_duplicates(TEXT[]);
+DROP FUNCTION IF EXISTS process_rss_batch(JSONB);
+DROP FUNCTION IF EXISTS check_url_duplicates_json(JSONB);
+
 -- Message de confirmation
 DO $$
 BEGIN
@@ -229,5 +187,4 @@ BEGIN
     RAISE NOTICE '📊 Tables créées : rss_articles, execution_logs';
     RAISE NOTICE '📈 Vues créées : article_stats';
     RAISE NOTICE '🔧 Fonctions créées : purge_old_articles(), get_source_stats()';
-    RAISE NOTICE '🔄 Fonctions n8n : filter_new_urls(), check_url_duplicates(), process_rss_batch()';
 END $$;
