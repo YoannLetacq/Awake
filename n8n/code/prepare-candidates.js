@@ -29,15 +29,24 @@ const REDDIT_CAP = 50;
 const REDDIT_KEY = 'reddit';
 const REDDIT_BASE = 'https://www.reddit.com';
 const SOURCE_MAX = 255;
-const ENTITIES = [['&nbsp;', ' '], ['&lt;', '<'], ['&gt;', '>'], ['&quot;', '"'], ['&#39;', "'"]];
+const NAMED = new Map([['nbsp', ' '], ['lt', '<'], ['gt', '>'], ['quot', '"'], ['amp', '&']]);
+const ENTITY_RE = /&(?:#[xX]([0-9a-fA-F]+)|#([0-9]+)|(nbsp|lt|gt|quot|amp));/g;
 
-// HTML to plain text. Tags become spaces (so words on either side stay apart); the listed
-// entities are decoded, &amp; last so that "&amp;lt;" stays the literal text "&lt;".
+// One entity to its character. Numeric ones only for valid code points (not 0, not a UTF-16
+// surrogate, not above U+10FFFF); anything else stays as written.
+const decodeEntity = (m, hex, dec, name) => {
+  if (name) return NAMED.get(name);
+  const cp = hex ? parseInt(hex, 16) : Number(dec);
+  return cp > 0 && cp <= 0x10ffff && (cp < 0xd800 || cp > 0xdfff) ? String.fromCodePoint(cp) : m;
+};
+
+// HTML to plain text. Tags become spaces (so words on either side stay apart); the listed named
+// entities and numeric &#N; / &#xH; are decoded in a single pass, so "&amp;lt;" stays the literal
+// text "&lt;" and "&#38;amp;" stays "&amp;" (no double decoding).
 const clean = (raw) => {
-  let s = String(raw ?? '').replace(/<\/?[a-zA-Z!][^<>]*>/g, ' ');
-  for (const [entity, char] of ENTITIES) s = s.replaceAll(entity, char);
+  const s = String(raw ?? '').replace(/<\/?[a-zA-Z!][^<>]*>/g, ' ').replace(ENTITY_RE, decodeEntity);
   // U+0000 is rejected by Postgres and would abort the whole insert batch.
-  return s.replaceAll('&amp;', '&').replaceAll('\u0000', '').replace(/\s+/g, ' ').trim();
+  return s.replaceAll('\u0000', '').replace(/\s+/g, ' ').trim();
 };
 
 const isTracking = (key) => {
@@ -87,13 +96,13 @@ const cands = [];
 for (const item of $input.all()) {
   const k = feedIndex(item);
   if (k < 0) {
-    console.warn('Prepare Candidates: RSS item without a valid feed pairing, skipped');
+    console.log('Prepare Candidates: RSS item without a valid feed pairing, skipped');
     continue;
   }
   const feed = feeds[k];
   const json = item.json ?? {};
   if ('error' in json) {
-    console.warn(`Prepare Candidates: feed failed, skipped: ${feed.name}`);
+    console.log(`Prepare Candidates: feed failed, skipped: ${feed.name}`);
     continue;
   }
   const t = Date.parse(String(json.pubDate || json.isoDate || ''));
@@ -124,7 +133,7 @@ const redditCfg = cfg.reddit ?? {};
 if (redditCfg.active) {
   const listing = $('Reddit Fetch').first()?.json;
   if (listing?.kind !== 'Listing' || !Array.isArray(listing.data?.children)) {
-    console.warn('Prepare Candidates: Reddit Fetch returned no listing, Reddit skipped');
+    console.log('Prepare Candidates: Reddit Fetch returned no listing, Reddit skipped');
   } else {
     for (const child of listing.data.children) {
       const d = child?.data ?? {};

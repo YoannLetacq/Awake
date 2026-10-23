@@ -134,8 +134,10 @@ test('the 48h window is exact: an item 47h59 old is kept, one 48h01 old is dropp
 });
 
 test('skips items with no usable date and takes published_at from pubDate before isoDate', async () => {
-  // Fails if: an item without a parseable date is kept (NaN passes a naive window
-  // check and the ISO conversion throws), or isoDate wins over a present pubDate.
+  // Fails if: an item without a parseable date is kept (mutation: remove the window check, so
+  // NaN reaches toISOString and the run throws 'Invalid time value'), or isoDate wins over a
+  // present pubDate. Dropping only Number.isFinite is an equivalent mutant: NaN already fails
+  // both bound comparisons.
   const pub = Date.now() - 2 * HOUR;
   const out = await prepare({
     input: [
@@ -161,6 +163,21 @@ test('strips tags, decodes the listed entities with &amp; last, and collapses wh
   });
   assert.deepEqual(rows(out).map((r) => [r.title, r.description]), [
     ['Big news & "hi"', "Tom &lt;3 'yo' done > x"],
+  ]);
+});
+
+test('decodes numeric entities for valid code points only, before &amp;', async () => {
+  // Fails if: &#N; / &#xH; stay encoded (the title keeps '&#8217;' and the title dedupe sees two
+  // spellings of one headline); an entity is decoded twice ('&amp;#38;' or '&#38;amp;' turns into '&'); or
+  // invalid code points (0, a surrogate, above 0x10FFFF) are decoded instead of left as written.
+  const out = await prepare({
+    input: [rss(0, {
+      title: 'OpenAI&#8217;s new model &#x27;o5&#x27; &#038; more',
+      description: 'lit &amp;#38; &#38;amp; bad &#0; &#xD800; &#1114112;',
+    })],
+  });
+  assert.deepEqual(rows(out).map((r) => [r.title, r.description]), [
+    ['OpenAI\u2019s new model \'o5\' & more', 'lit &#38; &amp; bad &#0; &#xD800; &#1114112;'],
   ]);
 });
 
@@ -199,7 +216,8 @@ test('uses contentSnippet, then content, when description is empty', async () =>
 });
 
 test('prefilter feeds keep AI-relevant titles; feeds without prefilter keep everything', async () => {
-  // Fails if: keyword matching ignores word boundaries ('RAG' matches inside 'RAGged');
+  // Fails if: keyword matching ignores the right word edge ('RAG' matches inside 'RAGged') or
+  // the left one ('LLM' matches inside 'megaLLM'; mutation: drop the (?<!WORD) lookbehind);
   // the AI/IA/ML check is case-insensitive ('ai' in "J'ai" or 'rainfall' passes); keywords
   // are matched case-sensitively ('gpt-based' is dropped); keywords with '-' or spaces never
   // match; regex specials are not escaped ('C++' throws); or prefilter also runs on a feed
@@ -217,7 +235,7 @@ test('prefilter feeds keep AI-relevant titles; feeds without prefilter keep ever
     'Les LLMs locaux sur votre Mac',
     'Why RAGs still matter',
   ];
-  const dropped = ["J'ai testé Docker", 'Storage with RAGged arrays', 'Average rainfall in Paris'];
+  const dropped = ["J'ai testé Docker", 'Storage with RAGged arrays', 'Average rainfall in Paris', 'megaLLM launch'];
   const input = [...kept, ...dropped].map((title, i) => rss(0, { title, link: `https://example.com/t${i}` }));
 
   const filtered = await prepare({ feeds: [feed({ prefilter: true })], input });
@@ -292,6 +310,17 @@ test('keeps only the 20 newest items of an RSS feed', async () => {
   const out = await prepare({ input: items });
   const newest20 = Array.from({ length: 20 }, (_, n) => `Item ${n + 1}`);
   assert.deepEqual(rows(out).map((r) => r.title).sort(), newest20.sort());
+});
+
+test('caps each RSS feed separately: two feeds of 25 fresh items keep 20 each', async () => {
+  // Fails if: the cap is global rather than per feed (mutation: group every candidate under
+  // one key), which keeps 20 rows in total instead of 40.
+  const feeds = [feed({ name: 'Feed A' }), feed({ name: 'Feed B' })];
+  const input = [0, 1].flatMap((k) => Array.from({ length: 25 }, (_, i) =>
+    rss(k, { title: `F${k} item ${i}`, link: `https://example.com/f${k}/${i}`, isoDate: iso(Date.now() - (i + 1) * MIN) })));
+  const out = await prepare({ feeds, input });
+  const perFeed = Object.groupBy(rows(out), (r) => r.source);
+  assert.deepEqual([perFeed['Feed A']?.length, perFeed['Feed B']?.length], [20, 20]);
 });
 
 const redditCfg = (over = {}) => ({ active: true, name: 'Reddit', category: 'Reddit Communities', priority: 'medium', ...over });
@@ -374,6 +403,28 @@ test('caps Reddit at 50 posts as one feed, not at the RSS cap of 20', async () =
   const out = await prepare({ cfg: config({ reddit: redditCfg() }), reddit: { kind: 'Listing', data: { children } } });
   const newest50 = Array.from({ length: 50 }, (_, n) => `Post ${n + 1}`);
   assert.deepEqual(rows(out).map((r) => r.title).sort(), newest50.sort());
+});
+
+test('drops Reddit posts older than 48h or more than 1h ahead, like RSS items', async () => {
+  // Fails if: the date guard on Reddit posts is removed (mutation: drop `!inWindow(t)` from the
+  // Reddit skip condition), so the 49h-old post and the post 2h ahead are kept.
+  const post = (title, ms) => ({
+    data: { title, permalink: `/r/OpenAI/comments/${title.replaceAll(' ', '_')}/x/`, url: 'https://external.example/w', selftext: '', created_utc: Math.floor(ms / 1000), subreddit_name_prefixed: 'r/OpenAI', stickied: false, over_18: false },
+  });
+  const out = await prepare({
+    cfg: config({ reddit: redditCfg() }),
+    reddit: {
+      kind: 'Listing',
+      data: {
+        children: [
+          post('Forty-nine hours old', Date.now() - 49 * HOUR),
+          post('Two hours ahead', Date.now() + 2 * HOUR),
+          post('Fresh', Date.now() - HOUR),
+        ],
+      },
+    },
+  });
+  assert.deepEqual(rows(out).map((r) => r.title), ['Fresh']);
 });
 
 test('uses Reddit selftext as the description when present, cleaned', async () => {
