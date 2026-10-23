@@ -19,12 +19,13 @@
       "name": "Hacker News Front Page",
       "url": "https://hnrss.org/frontpage",
       "category": "Tech Community",
-      "active": true,
-      "priority": "high"
+      "active": false,
+      "priority": "high",
+      "note": "Désactivé : couvert par Hacker News AI Filtered"
     },
     {
       "name": "Hacker News AI Filtered",
-      "url": "https://hnrss.org/newest?q=AI+OR+machine+learning+OR+LLM+OR+GPT",
+      "url": "https://hnrss.org/newest?q=AI+OR+LLM+OR+GPT+OR+Claude&points=50",
       "category": "Tech Community",
       "active": true,
       "priority": "high"
@@ -62,13 +63,13 @@
       "name": "OpenAI Research",
       "url": "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_openai_research.xml",
       "category": "AI Companies",
-      "active": true,
+      "active": false,
       "priority": "high",
-      "note": "Feed généré communauté"
+      "note": "Désactivé : doublon de OpenAI News"
     },
     {
       "name": "Microsoft AI Blog",
-      "url": "https://blogs.microsoft.com/ai/feed/",
+      "url": "https://news.microsoft.com/source/topics/ai/feed/",
       "category": "AI Companies",
       "active": true,
       "priority": "medium"
@@ -81,8 +82,8 @@
       "priority": "high"
     },
     {
-      "name": "Google AI Blog",
-      "url": "https://ai.googleblog.com/feeds/posts/default",
+      "name": "Google Research Blog",
+      "url": "https://research.google/blog/rss/",
       "category": "AI Companies",
       "active": true,
       "priority": "high"
@@ -98,23 +99,25 @@
       "name": "ArXiv AI Papers",
       "url": "https://rss.arxiv.org/rss/cs.AI",
       "category": "AI Research",
-      "active": true,
+      "active": false,
       "priority": "medium",
-      "note": "Beaucoup de volume - peut nécessiter filtrage"
+      "note": "Désactivé : ~370 papiers/run, coût Gemini"
     },
     {
       "name": "Papers With Code",
       "url": "https://paperswithcode.com/feed.xml",
       "category": "AI Research",
-      "active": true,
-      "priority": "high"
+      "active": false,
+      "priority": "high",
+      "note": "Désactivé : flux mort (renvoie du HTML)"
     },
     {
       "name": "NYTimes Technology",
       "url": "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
       "category": "Mainstream Media",
       "active": true,
-      "priority": "medium"
+      "priority": "medium",
+      "prefilter": true
     },
     {
       "name": "Gary Marcus Substack",
@@ -136,14 +139,16 @@
       "url": "https://korben.info/feed",
       "category": "French Tech",
       "active": true,
-      "priority": "medium"
+      "priority": "medium",
+      "prefilter": true
     },
     {
       "name": "FreeCodeCamp",
       "url": "https://www.freecodecamp.org/news/rss/",
       "category": "Education",
       "active": true,
-      "priority": "medium"
+      "priority": "medium",
+      "prefilter": true
     },
     {
       "name": "Towards Data Science",
@@ -157,70 +162,29 @@
       "name": "The Batch (Andrew Ng)",
       "url": "https://www.deeplearning.ai/the-batch/feed/",
       "category": "Experts & Analysis",
-      "active": true,
-      "priority": "high"
-    },
-    {
-      "name": "r/MachineLearning",
-      "url": "https://www.reddit.com/r/MachineLearning/.rss",
-      "category": "Reddit Communities",
-      "active": true,
-      "priority": "high"
-    },
-    {
-      "name": "r/OpenAI",
-      "url": "https://www.reddit.com/r/OpenAI/.rss",
-      "category": "Reddit Communities",
-      "active": true,
-      "priority": "medium"
-    },
-    {
-      "name": "r/Anthropic",
-      "url": "https://www.reddit.com/r/Anthropic/.rss",
-      "category": "Reddit Communities",
-      "active": true,
-      "priority": "medium"
-    },
-    {
-      "name": "r/cursor",
-      "url": "https://www.reddit.com/r/cursor/.rss",
-      "category": "Reddit Communities",
-      "active": true,
-      "priority": "medium"
-    },
-    {
-      "name": "r/artificial",
-      "url": "https://www.reddit.com/r/artificial/.rss",
-      "category": "Reddit Communities",
-      "active": true,
-      "priority": "medium"
-    },
-    {
-      "name": "r/ArtificialInteligence",
-      "url": "https://www.reddit.com/r/ArtificialInteligence/.rss",
-      "category": "Reddit Communities",
-      "active": true,
-      "priority": "medium"
-    }
-  ],
-  "sources_custom_rsshub": [
-    {
-      "name": "Mistral AI News",
-      "url": "http://rsshub:1200/mistral/news",
-      "category": "AI Companies",
       "active": false,
       "priority": "high",
-      "note": "Nécessite configuration RSSHub custom - voir docs/RSSHUB.md"
-    },
-    {
-      "name": "DeepSeek Blog",
-      "url": "http://rsshub:1200/deepseek/blog",
-      "category": "AI Companies",
-      "active": false,
-      "priority": "high",
-      "note": "Nécessite configuration RSSHub custom"
+      "note": "Désactivé : flux mort (404)"
     }
   ],
+  "reddit": {
+    "active": true,
+    "name": "Reddit",
+    "category": "Reddit Communities",
+    "priority": "medium",
+    "subreddits": [
+      "MachineLearning",
+      "OpenAI",
+      "Anthropic",
+      "cursor",
+      "artificial",
+      "ArtificialInteligence"
+    ],
+    "listing": "top",
+    "t": "day",
+    "limit": 50,
+    "note": "API OAuth (credential n8n 'Reddit OAuth2', grant Client Credentials) — le RSS public renvoie 429"
+  },
   "keywords_ai": [
     "llm",
     "gpt",
@@ -242,17 +206,10 @@
     "machine learning",
     "deep learning",
     "intelligence artificielle",
+    "artificial intelligence",
     "neural network",
     "stable diffusion",
     "midjourney",
     "dall-e"
-  ],
-  "categories": {
-    "🧠 LLM": ["llm", "gpt", "claude", "mistral", "gemini", "chatgpt"],
-    "📚 RAG": ["rag", "retrieval", "embedding", "vector"],
-    "🎨 Vision": ["image", "diffusion", "dall-e", "midjourney", "stable diffusion", "vision"],
-    "🤖 Agents": ["agent", "autonomous", "agentic", "workflow", "swarm"],
-    "💻 Coding": ["code", "copilot", "coding", "cursor", "github copilot", "devin"],
-    "🔬 Research": ["research", "paper", "arxiv", "publication", "study"]
-  }
+  ]
 }

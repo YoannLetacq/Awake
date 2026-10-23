@@ -114,13 +114,9 @@ list_all() {
 
     echo ""
 
-    # Custom RSSHub sources
-    local custom_count=$(jq '.sources_custom_rsshub | length' "$RSS_FILE" 2>/dev/null || echo "0")
-    if [ "$custom_count" != "0" ] && [ "$custom_count" != "null" ]; then
-        echo -e "${YELLOW}🔧 SOURCES RSSHUB CUSTOM:${NC}"
-        jq -r '.sources_custom_rsshub[] | "  [\(if .active then "✅" else "❌" end)] \(.name) - \(.url)"' "$RSS_FILE"
-        echo ""
-    fi
+    # Reddit (OAuth API, one combined request)
+    jq -r 'if .reddit.active then "  [Reddit] r/" + (.reddit.subreddits | join("+")) else empty end' "$RSS_FILE"
+    echo ""
 }
 
 reload_sources() {
