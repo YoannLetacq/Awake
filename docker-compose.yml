@@ -45,9 +45,6 @@ services:
       - DB_POSTGRESDB_DATABASE=${POSTGRES_DB}
       - DB_POSTGRESDB_USER=${POSTGRES_USER}
       - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
-      - N8N_BASIC_AUTH_ACTIVE=${N8N_BASIC_AUTH_ACTIVE}
-      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER}
-      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD}
       - WEBHOOK_URL=http://n8n:5678/
       - N8N_WEBHOOK_URL=http://n8n:5678/
       - DISCORD_WEBHOOK_TECH_NEWS=${DISCORD_WEBHOOK_TECH_NEWS}
@@ -71,7 +68,6 @@ services:
       - GENERIC_TIMEZONE=${TZ:-Europe/Paris}
       # Code nodes and expressions need $env access (Authorize Mention, Format Embeds, Gemini Score).
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
-      - N8N_API_KEY=${N8N_API_KEY}
       - N8N_RESTRICT_FILE_ACCESS_TO=/home/node/rss_sources.json
     ports:
       - "127.0.0.1:${N8N_PORT:-5678}:5678"
