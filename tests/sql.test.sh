@@ -3,8 +3,10 @@
 # throwaway Postgres 16 container.
 #
 # Each check drives the real files: scripts/init.sql (schema and migration) and
-# n8n/sql/*.sql (the statements). The n8n Postgres node binds $1..$n
-# positionally, so every statement file is PREPAREd and EXECUTEd the same way.
+# n8n/sql/*.sql (the statements). The n8n Postgres node (pg-promise) inlines its
+# positional values into the query text client side, before sending it; this script
+# PREPAREs and EXECUTEs each statement file instead, an equivalent server-side binding
+# of the same positional parameters.
 # Every check prints PASS or FAIL; the script exits 1 if any check fails. An SQL error that no
 # check expects is a FAIL too (see sql).
 #
@@ -146,7 +148,8 @@ wait_for() {
 }
 
 # a. Legacy upgrade. Catches: no backfill (the legacy row stays unsent and becomes
-#    scorable); no DROP FUNCTION (the dead dedup functions survive on a live DB).
+#    scorable); no DROP FUNCTION (the dead dedup functions survive on a live DB);
+#    check_url_duplicates_json still created or kept.
 check_legacy_upgrade() {
   q postgres "CREATE DATABASE sc_legacy;"
   sql sc_legacy <<'SQL'
@@ -175,6 +178,10 @@ CREATE FUNCTION check_url_duplicates(urls_to_check TEXT[]) RETURNS TABLE(
 CREATE FUNCTION process_rss_batch(articles_json JSONB) RETURNS TABLE(
     url TEXT, is_new BOOLEAN, should_process BOOLEAN, article_data JSONB)
     LANGUAGE sql AS 'SELECT NULL::TEXT, NULL::BOOLEAN, NULL::BOOLEAN, NULL::JSONB WHERE false';
+CREATE FUNCTION check_url_duplicates_json(urls_json JSONB) RETURNS TABLE(
+    url TEXT, is_new BOOLEAN, existing_id INTEGER,
+    existing_created_at TIMESTAMP WITH TIME ZONE, existing_sent_at TIMESTAMP WITH TIME ZONE)
+    LANGUAGE sql AS 'SELECT NULL::TEXT, NULL::BOOLEAN, NULL::INTEGER, NULL::TIMESTAMPTZ, NULL::TIMESTAMPTZ WHERE false';
 SQL
   expect "a: init.sql applies to a live pre-migration table" ok "$(init sc_legacy)"
   expect "a: legacy row is marked sent and out of the scoring budget" "t|3" \
@@ -182,17 +189,22 @@ SQL
   expect "a: claim-unscored never returns a legacy row" "" \
     "$(run_stmt sc_legacy "$CLAIM_UNSCORED_SQL" 10)"
   expect "a: dead dedup functions dropped, kept ones remain" "0|2" \
-    "$(q sc_legacy "SELECT (SELECT count(*) FROM pg_proc WHERE proname IN ('filter_new_urls', 'check_url_duplicates', 'process_rss_batch')), (SELECT count(*) FROM pg_proc WHERE proname IN ('purge_old_articles', 'get_source_stats'));")"
+    "$(q sc_legacy "SELECT (SELECT count(*) FROM pg_proc WHERE proname IN ('filter_new_urls', 'check_url_duplicates', 'process_rss_batch', 'check_url_duplicates_json')), (SELECT count(*) FROM pg_proc WHERE proname IN ('purge_old_articles', 'get_source_stats'));")"
 }
 
 # b. Re-running init.sql after the migration. Catches: an unguarded backfill (every
-#    re-run would mark fresh candidates as sent and exhausted).
+#    re-run would mark fresh candidates as sent and exhausted); the scoring lease column
+#    added inside the score_attempts guard (a database migrated before the lease existed
+#    would never get it).
 check_rerun_keeps_fresh_rows() {
   q sc_legacy "INSERT INTO rss_articles (url, title, source, source_type, published_at)
 VALUES ('https://fresh.example/b', 'Fresh story', 'Fresh', 'news', now() - interval '1 hour');"
+  q sc_legacy "ALTER TABLE rss_articles DROP COLUMN IF EXISTS scoring_started_at;"
   expect "b: init.sql re-runs cleanly" ok "$(init sc_legacy)"
   expect "b: fresh candidate stays unscored" "t|0" \
     "$(q sc_legacy "SELECT sent_at IS NULL, score_attempts FROM rss_articles WHERE url = 'https://fresh.example/b';")"
+  expect "b: a database migrated before the lease gets scoring_started_at" "1" \
+    "$(q sc_legacy "SELECT count(*) FROM information_schema.columns WHERE table_name = 'rss_articles' AND column_name = 'scoring_started_at';")"
 }
 
 # c. insert-candidates.sql is idempotent per URL. Catches: no ON CONFLICT (the second
@@ -243,15 +255,18 @@ VALUES ('https://attempts.example/d', 'Attempts story', 'Src', 'news', now());"
   local counts=()
   for _ in 1 2 3 4; do
     counts+=("$(count_rows "$(run_stmt sc_attempts "$CLAIM_UNSCORED_SQL" 10)")")
+    # Each run dies before Save Scores: its lease expires (check k).
+    q sc_attempts "UPDATE rss_articles SET scoring_started_at = now() - interval '16 minutes';" >/dev/null
   done
   expect "d: claimed for scoring 3 times, then never again" "1 1 1 0" "${counts[*]}"
 }
 
 # e. Claim for posting: score and confidence thresholds, per-channel cap, ordering.
 check_claim_threshold_cap_order() {
-  # e1: the 7 scored rows of the brief (5 valid, 2 decoys). Catches: no score filter
-  # (decoy score 50 returned); no confidence filter (decoy confidence 80 returned, score
-  # 90 leaks into the output); a claim that returns already sent rows again.
+  # e1: the 7 scored rows of the brief (5 valid, 2 decoys). Catches: no confidence filter
+  # (decoy confidence 80 returned, score 90 leaks into the output); a claim that returns
+  # already sent rows again. The 5-row cap hides the score-50 decoy from the first claim:
+  # the score threshold itself is pinned by check n5.
   expect "e1: fresh database" ok "$(new_db sc_e1)"
   {
     prelude
@@ -359,6 +374,161 @@ check_concurrent_claims_do_not_overlap() {
   expect "g: session B, once unblocked, returns none of A's rows" "" "$(cat "$WORK/b.out")"
 }
 
+# j. Claim-unscored selection. Catches: no gemini_confidence IS NULL filter (a scored row
+#    is sent to Gemini again: double spend); no 48 h created_at window, or a narrower one;
+#    no LIMIT (one paid call carries every candidate); oldest-first order (the freshest
+#    items age out of the window while the backlog drains); NULL published_at first.
+check_claim_unscored_selection() {
+  expect "j1: fresh database" ok "$(new_db sc_j1)"
+  {
+    prelude
+    ingest 'https://j.example/s' 'Scored' news 0 90 70
+  } | sql sc_j1 >/dev/null
+  q sc_j1 "INSERT INTO rss_articles (url, title, source, source_type, published_at, created_at) VALUES
+('https://j.example/old', 'Old 49h', 'Src', 'news', now(), now() - interval '49 hours'),
+('https://j.example/new', 'Fresh 47h', 'Src', 'news', now(), now() - interval '47 hours');" >/dev/null
+  expect "j1: a scored row and a 49 h-old row are never claimed, a 47 h-old one is" "Fresh 47h" \
+    "$(column 2 "$(run_stmt sc_j1 "$CLAIM_UNSCORED_SQL" 10)")"
+
+  # 30 eligible rows: 'No date' (published_at NULL, lowest id), then Batch 1..29, Batch 29
+  # the freshest. A batch of 25 takes Batch 5..29; the 5 left are 'No date' and Batch 1..4.
+  expect "j2: fresh database" ok "$(new_db sc_j2)"
+  q sc_j2 "INSERT INTO rss_articles (url, title, source, source_type, published_at)
+VALUES ('https://j.example/nodate', 'No date', 'Src', 'news', NULL);
+INSERT INTO rss_articles (url, title, source, source_type, published_at)
+SELECT 'https://j.example/' || g, 'Batch ' || g, 'Src', 'news', now() - (30 - g) * interval '1 minute'
+FROM generate_series(1, 29) g;" >/dev/null
+  expect "j2: 30 eligible rows, a batch of 25 claims exactly 25" "25" \
+    "$(count_rows "$(run_stmt sc_j2 "$CLAIM_UNSCORED_SQL" 25)")"
+  expect "j2: the freshest are claimed first, undated rows last" "No date,Batch 1,Batch 2,Batch 3,Batch 4" \
+    "$(q sc_j2 "SELECT string_agg(title, ',' ORDER BY id) FROM rss_articles WHERE score_attempts = 0;")"
+}
+
+# k. Claim-unscored lease. Catches: no lease (a run that starts before the previous one
+#    saved its scores claims the same rows again: paid twice, two attempts spent at once);
+#    a lease that never expires (a run that died holds its rows forever); a lease shorter
+#    or longer than 15 minutes.
+check_claim_unscored_lease() {
+  expect "k: fresh database" ok "$(new_db sc_k)"
+  q sc_k "INSERT INTO rss_articles (url, title, source, source_type, published_at) VALUES
+('https://k.example/1', 'Lease one', 'Src', 'news', now()),
+('https://k.example/2', 'Lease two', 'Src', 'news', now());" >/dev/null
+  expect "k: the first claim takes both rows" "2" "$(count_rows "$(run_stmt sc_k "$CLAIM_UNSCORED_SQL" 10)")"
+  expect "k: a second claim before Save Scores returns 0 rows" "0" \
+    "$(count_rows "$(run_stmt sc_k "$CLAIM_UNSCORED_SQL" 10)")"
+  q sc_k "UPDATE rss_articles SET scoring_started_at = now() - interval '14 minutes';" >/dev/null
+  expect "k: a lease 14 minutes old still holds" "0" "$(count_rows "$(run_stmt sc_k "$CLAIM_UNSCORED_SQL" 10)")"
+  q sc_k "UPDATE rss_articles SET scoring_started_at = now() - interval '16 minutes';" >/dev/null
+  expect "k: a lease older than 15 minutes is re-claimable" "2" \
+    "$(count_rows "$(run_stmt sc_k "$CLAIM_UNSCORED_SQL" 10)")"
+}
+
+# l. Re-ingesting a url that was scored and sent. Catches: ON CONFLICT DO UPDATE that
+#    resets sent_at, the gemini_* fields or score_attempts (re-scored and re-posted on
+#    every fetch). The new title differs, so the sent-title rule does not hide the conflict.
+check_reinsert_keeps_scoring_and_sent_state() {
+  expect "l: fresh database" ok "$(new_db sc_l)"
+  {
+    prelude
+    prep cu "$CLAIM_UNSCORED_SQL"
+    prep ct "$CLAIM_TOP_SQL"
+    printf "EXECUTE ins('https://l.example/a', 'Story L', 'desc', 'Src', 'Tech News', 0, now() - interval '1 hour');\n"
+    printf 'EXECUTE cu(10);\n'
+    printf '%s\n' "SELECT id AS scored_id FROM rss_articles WHERE url = 'https://l.example/a' \gset"
+    printf "EXECUTE sc(:scored_id, 90, 80, 'LLM', 'tag', 'sum', 'take');\n"
+    printf 'EXECUTE ct(60, 5, %s);\n' "$ALL_CHANNELS"
+  } | sql sc_l >/dev/null
+  local state="SELECT sent_at, gemini_confidence, gemini_score, category, ai_tag, ai_summary, ai_takeaway, score_attempts, title FROM rss_articles WHERE url = 'https://l.example/a';"
+  local before
+  before=$(q sc_l "$state")
+  expect "l: the row is scored, sent and has spent 1 attempt" "t|90|80|1" \
+    "$(q sc_l "SELECT sent_at IS NOT NULL, gemini_confidence, gemini_score, score_attempts FROM rss_articles WHERE url = 'https://l.example/a';")"
+  run_stmt sc_l "$INSERT_SQL" "'https://l.example/a', 'Story L retitled', 'desc 2', 'Src 2', 'Company Blogs', 3, now()" >/dev/null
+  expect "l: re-inserting its url leaves sent_at, gemini_* and score_attempts unchanged" "$before" "$(q sc_l "$state")"
+}
+
+# m. Positional round trip. Every value is distinct, and every column is read back.
+#    Catches: any two $n swapped in insert-candidates or save-scores (title/description,
+#    source/source_type, confidence/score, summary/takeaway...).
+check_positional_round_trip() {
+  expect "m: fresh database" ok "$(new_db sc_m)"
+  {
+    prelude
+    printf "EXECUTE ins('https://m.example/u', 'M title', 'M description', 'M source', 'M source_type', 7, '2026-01-02 03:04:05+00');\n"
+    printf '%s\n' "SELECT id AS mid FROM rss_articles WHERE url = 'https://m.example/u' \gset"
+    printf "EXECUTE sc(:mid, 91, 72, 'M category', 'M tag', 'M summary', 'M takeaway');\n"
+  } | sql sc_m >/dev/null
+  expect "m: every insert-candidates and save-scores value lands in its own column" \
+    "https://m.example/u|M title|M description|M source|M source_type|7|2026-01-02 03:04:05|91|72|M category|M tag|M summary|M takeaway" \
+    "$(q sc_m "SELECT url, title, description, source, source_type, prio, published_at AT TIME ZONE 'UTC', gemini_confidence, gemini_score, category, ai_tag, ai_summary, ai_takeaway FROM rss_articles;")"
+}
+
+# n. Claim for posting: window, per-channel cap, prio, thresholds.
+check_claim_top_selection() {
+  # n1. Catches: no 48 h published_at window, or a narrower one.
+  expect "n1: fresh database" ok "$(new_db sc_n1)"
+  {
+    prelude
+    ingest 'https://n.example/old' 'Old 49h' 'Tech News' 0 90 99
+    ingest 'https://n.example/new' 'Recent 47h' 'Tech News' 0 90 70
+  } | sql sc_n1 >/dev/null
+  q sc_n1 "UPDATE rss_articles SET published_at = now() - interval '49 hours' WHERE url = 'https://n.example/old';
+UPDATE rss_articles SET published_at = now() - interval '47 hours' WHERE url = 'https://n.example/new';" >/dev/null
+  expect "n1: a row published 49 h ago is never claimed, 47 h ago is" "Recent 47h" \
+    "$(column 3 "$(run_stmt sc_n1 "$CLAIM_TOP_SQL" "60, 5, $ALL_CHANNELS")")"
+
+  # n2. 6 Tech News rows and 2 Company Blogs rows, cap 5. Catches: one global cap (5 rows
+  # in all, the Company Blogs rows held back).
+  expect "n2: fresh database" ok "$(new_db sc_n2)"
+  {
+    prelude
+    for s in 80 79 78 77 76 75; do ingest "https://n.example/t$s" "Tech $s" 'Tech News' 0 90 "$s"; done
+    ingest 'https://n.example/c70' 'Blog 70' 'Company Blogs' 0 90 70
+    ingest 'https://n.example/c69' 'Blog 69' 'Company Blogs' 0 90 69
+  } | sql sc_n2 >/dev/null
+  run_stmt sc_n2 "$CLAIM_TOP_SQL" "60, 5, $ALL_CHANNELS" >/dev/null
+  expect "n2: the cap is counted per source_type" "Company Blogs:2,Tech News:5" \
+    "$(q sc_n2 "SELECT string_agg(source_type || ':' || n, ',' ORDER BY source_type) FROM (SELECT source_type, count(*) AS n FROM rss_articles WHERE sent_at IS NOT NULL GROUP BY source_type) t;")"
+
+  # n3. Equal score, prio 10 ingested before prio 0 (so published_at alone favours prio 0).
+  # Catches: prio ignored in the per-channel ranking.
+  expect "n3: fresh database" ok "$(new_db sc_n3)"
+  {
+    prelude
+    ingest 'https://n.example/p10' 'Prio ten' 'Tech News' 10 90 70
+    ingest 'https://n.example/p0' 'Prio zero' 'Tech News' 0 90 70
+  } | sql sc_n3 >/dev/null
+  expect "n3: prio breaks a score tie in the cap" "Prio ten" \
+    "$(column 3 "$(run_stmt sc_n3 "$CLAIM_TOP_SQL" "60, 1, $ALL_CHANNELS")")"
+
+  # n4. Catches: prio ignored in the output order (70 + 10 must come before 75 + 0).
+  expect "n4: fresh database" ok "$(new_db sc_n4)"
+  {
+    prelude
+    ingest 'https://n.example/p10' 'Prio ten' 'Tech News' 10 90 70
+    ingest 'https://n.example/p75' 'Plain 75' 'Tech News' 0 90 75
+    ingest 'https://n.example/p0' 'Prio zero' 'Tech News' 0 90 70
+  } | sql sc_n4 >/dev/null
+  expect "n4: output is ordered by gemini_score + prio" \
+    "https://n.example/p10 https://n.example/p75 https://n.example/p0" \
+    "$(column 2 "$(run_stmt sc_n4 "$CLAIM_TOP_SQL" "60, 5, $ALL_CHANNELS")")"
+
+  # n5. Fewer valid rows than the cap, so a decoy would show. Catches: score threshold
+  # ignored, or > instead of >= (60 dropped); confidence floor not 85 inclusive.
+  expect "n5: fresh database" ok "$(new_db sc_n5)"
+  {
+    prelude
+    ingest 'https://n.example/v70' 'Valid 70' 'Tech News' 0 90 70
+    ingest 'https://n.example/a60' 'At 60' 'Tech News' 0 90 60
+    ingest 'https://n.example/b59' 'Below 59' 'Tech News' 0 90 59
+    ingest 'https://n.example/d50' 'Decoy 50' 'Tech News' 0 90 50
+    ingest 'https://n.example/c85' 'Conf 85' 'Tech News' 0 85 65
+    ingest 'https://n.example/c84' 'Conf 84' 'Tech News' 0 84 99
+  } | sql sc_n5 >/dev/null
+  expect "n5: only score >= 60 and confidence >= 85 are claimed" "70 65 60" \
+    "$(column 8 "$(run_stmt sc_n5 "$CLAIM_TOP_SQL" "60, 5, $ALL_CHANNELS")")"
+}
+
 check_legacy_upgrade
 check_insert_skips_already_sent_title
 check_claim_skips_channels_without_webhook
@@ -368,6 +538,11 @@ check_attempt_cap
 check_claim_threshold_cap_order
 check_one_story_per_title
 check_concurrent_claims_do_not_overlap
+check_claim_unscored_selection
+check_claim_unscored_lease
+check_reinsert_keeps_scoring_and_sent_state
+check_positional_round_trip
+check_claim_top_selection
 
 # Each unexpected SQL error that sql() logged is a FAIL.
 FAILS=$((FAILS + $(wc -l <"$WORK/unexpected")))

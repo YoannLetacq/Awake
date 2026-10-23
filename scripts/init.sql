@@ -118,28 +118,6 @@ $$ LANGUAGE plpgsql;
 -- FONCTIONS DE DÉDUPLICATION POUR N8N
 -- ==========================================
 
--- Fonction 2b: Version JSONB pour n8n (RECOMMANDÉE)
-CREATE OR REPLACE FUNCTION check_url_duplicates_json(urls_json JSONB)
-RETURNS TABLE(
-    url TEXT,
-    is_new BOOLEAN,
-    existing_id INTEGER,
-    existing_created_at TIMESTAMP WITH TIME ZONE,
-    existing_sent_at TIMESTAMP WITH TIME ZONE
-) AS $$
-BEGIN
-    RETURN QUERY
-    SELECT
-        u.url::TEXT,
-        (a.id IS NULL) as is_new,
-        a.id as existing_id,
-        a.created_at as existing_created_at,
-        a.sent_at as existing_sent_at
-    FROM jsonb_array_elements_text(urls_json) u(url)
-    LEFT JOIN rss_articles a ON a.url = u.url::TEXT;
-END;
-$$ LANGUAGE plpgsql;
-
 -- Fonction 4: Stats de déduplication (monitoring)
 CREATE OR REPLACE FUNCTION get_deduplication_stats()
 RETURNS TABLE(
@@ -190,11 +168,17 @@ BEGIN
     END IF;
 END $$;
 
+-- MIGRATION: scoring lease (idempotent). Outside the guard above, so a database
+-- migrated before the lease existed gets it too. claim-unscored.sql sets it and skips
+-- rows leased less than 15 minutes ago.
+ALTER TABLE rss_articles ADD COLUMN IF NOT EXISTS scoring_started_at TIMESTAMP WITH TIME ZONE;
+
 -- Dedup helpers replaced by insert-candidates.sql (ON CONFLICT). Dropped so that
 -- live databases lose them too. Argument types must match the old signatures.
 DROP FUNCTION IF EXISTS filter_new_urls(TEXT[]);
 DROP FUNCTION IF EXISTS check_url_duplicates(TEXT[]);
 DROP FUNCTION IF EXISTS process_rss_batch(JSONB);
+DROP FUNCTION IF EXISTS check_url_duplicates_json(JSONB);
 
 -- Message de confirmation
 DO $$
