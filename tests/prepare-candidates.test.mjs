@@ -120,6 +120,19 @@ test('keeps items up to 48h old and up to 1h ahead; drops older or further-ahead
   assert.deepEqual(rows(out).map((r) => r.title), ['Forty-seven hours old', 'Half an hour ahead']);
 });
 
+test('the 48h window is exact: an item 47h59 old is kept, one 48h01 old is dropped', async () => {
+  // Fails if: the window is wider than 48h, which keeps the 48h01 item (mutation: the
+  // `NOW - 48 * HOUR_MS` bound in n8n/code/prepare-candidates.js set to 49 hours); or narrower,
+  // which drops the 47h59 item (mutation: 47 hours).
+  const out = await prepare({
+    input: [
+      rss(0, { title: 'Forty-seven hours fifty-nine', link: 'https://example.com/47h59', isoDate: iso(Date.now() - 47 * HOUR - 59 * MIN) }),
+      rss(0, { title: 'Forty-eight hours one', link: 'https://example.com/48h01', isoDate: iso(Date.now() - 48 * HOUR - MIN) }),
+    ],
+  });
+  assert.deepEqual(rows(out).map((r) => r.title), ['Forty-seven hours fifty-nine']);
+});
+
 test('skips items with no usable date and takes published_at from pubDate before isoDate', async () => {
   // Fails if: an item without a parseable date is kept (NaN passes a naive window
   // check and the ISO conversion throws), or isoDate wins over a present pubDate.

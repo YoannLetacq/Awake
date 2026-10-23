@@ -5,7 +5,8 @@
 # Each check drives the real files: scripts/init.sql (schema and migration) and
 # n8n/sql/*.sql (the statements). The n8n Postgres node binds $1..$n
 # positionally, so every statement file is PREPAREd and EXECUTEd the same way.
-# Every check prints PASS or FAIL; the script exits 1 if any check fails.
+# Every check prints PASS or FAIL; the script exits 1 if any check fails. An SQL error that no
+# check expects is a FAIL too (see sql).
 #
 # Usage: bash tests/sql.test.sh   (needs docker)
 set -euo pipefail
@@ -19,6 +20,7 @@ CLAIM_TOP_SQL="$REPO/n8n/sql/claim-top-articles.sql"
 
 CONT="veille-sqltest-$$"
 WORK=$(mktemp -d)
+: >"$WORK/unexpected"
 FAILS=0
 ALL_CHANNELS="ARRAY['Tech News','Company Blogs','Reddit Communities','Other']"
 
@@ -51,13 +53,22 @@ expect() {
 }
 
 # sql DB: runs the SQL read from stdin and prints unaligned rows ('|' separated).
-# A SQL error prints "SQL_ERROR: ..." instead, so the check fails with the message.
+# A SQL error prints "SQL_ERROR: ..." instead, so the check fails with the message. The error
+# is also a FAIL, unless the call says it expects one: EXPECT_SQL_ERROR=1 q DB SQL.
+# sql runs inside $(...) subshells, where FAILS would be lost: the FAIL is logged to a file
+# and counted at the end of the script.
 sql() {
   if docker exec -i "$CONT" psql -X -q -v ON_ERROR_STOP=1 -At -F '|' -U postgres -d "$1" \
     >"$WORK/out" 2>"$WORK/err"; then
     cat "$WORK/out"
   else
-    echo "SQL_ERROR: $(sed '/^NOTICE:/d' "$WORK/err" | tr '\n' ' ')"
+    local msg
+    msg="SQL_ERROR: $(sed '/^NOTICE:/d' "$WORK/err" | tr '\n' ' ')"
+    echo "$msg"
+    if [ -z "${EXPECT_SQL_ERROR:-}" ]; then
+      echo "FAIL unexpected $msg" >&2
+      echo "$msg" >>"$WORK/unexpected"
+    fi
   fi
 }
 
@@ -279,8 +290,9 @@ check_claim_threshold_cap_order() {
 }
 
 # f. One story per title. Catches: no within-claim dedupe (both rows of a title are
-#    returned); no cross-source rule (a later row whose title was already sent is
-#    returned again).
+#    returned); no sent-title rule in insert-candidates (a row whose title was already sent
+#    is inserted again); no sent-title rule in claim-top-articles (a row whose title was
+#    already sent is claimed, when a plain INSERT put it in the table).
 check_one_story_per_title() {
   expect "f: fresh database" ok "$(new_db sc_f)"
   {
@@ -292,12 +304,23 @@ check_one_story_per_title() {
   first=$(run_stmt sc_f "$CLAIM_TOP_SQL" "60, 5, $ALL_CHANNELS")
   expect "f: same title in two sources, only the best row is returned" \
     "https://f.example/1" "$(column 2 "$first")"
-  {
-    prelude
-    ingest 'https://f.example/3' 'claude ships thing' news 0 90 99
-  } | sql sc_f
+
+  # insert-candidates skips a title that was already sent (row 1): 0 new rows.
+  run_stmt sc_f "$INSERT_SQL" "'https://f.example/3', 'claude ships thing', 'desc', 'Src', 'news', 0, now()" >/dev/null
+  expect "f: insert-candidates adds 0 rows for a title already sent" "2" \
+    "$(q sc_f "SELECT count(*) FROM rss_articles;")"
+  expect "f: the skipped url is not in the table" "0" \
+    "$(q sc_f "SELECT count(*) FROM rss_articles WHERE url = 'https://f.example/3';")"
+
+  # claim-top-articles never returns a row whose title was already sent. The row comes from a
+  # plain INSERT (bypassing insert-candidates) and is eligible in every other respect: unsent,
+  # score 99, confidence 90, published now, channel Other. Only the title rule excludes it.
+  q sc_f "INSERT INTO rss_articles (url, title, source, source_type, published_at, gemini_score, gemini_confidence)
+VALUES ('https://f.example/4', 'CLAUDE SHIPS THING', 'Src', 'news', now(), 99, 90);" >/dev/null
   later=$(run_stmt sc_f "$CLAIM_TOP_SQL" "60, 5, $ALL_CHANNELS")
-  expect "f: a later row whose title was already sent is never returned" "" "$later"
+  expect "f: a row whose title was already sent is never claimed" "" "$later"
+  expect "f: and it stays unsent" "t" \
+    "$(q sc_f "SELECT sent_at IS NULL FROM rss_articles WHERE url = 'https://f.example/4';")"
 }
 
 # g. Concurrent claims. Session A claims two rows and keeps its transaction open; session
@@ -345,6 +368,9 @@ check_attempt_cap
 check_claim_threshold_cap_order
 check_one_story_per_title
 check_concurrent_claims_do_not_overlap
+
+# Each unexpected SQL error that sql() logged is a FAIL.
+FAILS=$((FAILS + $(wc -l <"$WORK/unexpected")))
 
 echo
 if [ "$FAILS" -gt 0 ]; then
