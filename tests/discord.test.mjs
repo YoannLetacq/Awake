@@ -9,10 +9,11 @@ process.env.TZ = 'UTC';
 
 const AsyncFunction = (async () => {}).constructor;
 
-// harness.runCode discards console output. The warn assertions run the same node source with a recording console.
+// harness.runCode discards console output. The warning assertions run the same node source with a recording console.
+// Only console.log is recorded: the n8n task runner turns warn/error/info into no-ops, so a console.warn is never seen.
 async function runRecording(name, { input = [], env = {} } = {}) {
   const warnings = [];
-  const recorder = { log() {}, error() {}, warn: (msg) => warnings.push(String(msg)) };
+  const recorder = { warn() {}, error() {}, info() {}, log: (msg) => warnings.push(String(msg)) };
   const $ = () => {
     throw new Error('$() is not mocked in this test');
   };
@@ -25,7 +26,7 @@ const mention = (id, authorId) => ({ json: { id, authorId, channelId: 'chan-1', 
 
 test('authorize: an empty, unset or comma-only allow-list denies every mention and warns', async () => {
   // Fails if the deny-by-default gate is removed: mutation `return $input.all();` returns both mentions.
-  // Fails if the warning is dropped: mutation deletes the console.warn line, so warnings stays empty.
+  // Fails if the warning is dropped or sent to a no-op: mutation deletes the console.log line or turns it into console.warn.
   for (const DISCORD_ALLOWED_AUTHORS of [undefined, '', ' , ,']) {
     const { items, warnings } = await runRecording('authorize-mention', {
       input: [mention('m1', '1'), mention('m2', '2')],
@@ -45,6 +46,15 @@ test('authorize: keeps only mentions whose author is in the trimmed allow-list',
     env: { DISCORD_ALLOWED_AUTHORS: '1, 2' },
   });
   assert.deepEqual(items, [mention('m1', '1'), mention('m2', 2)]);
+});
+
+test('authorize: a mixed batch keeps the allowed authors in order and drops the rest', async () => {
+  // Fails if the gate is removed: mutation `return $input.all();` keeps the denied authors 8, 4 and 799.
+  // Fails if ids are matched as substrings: mutation `allowed.some(id => author.includes(id))` keeps 4 and 799.
+  // Fails if the list is not trimmed: '\t7' and '42 ' never match, so nothing is kept.
+  const input = [mention('a', '7'), mention('b', '8'), mention('c', '42'), mention('d', '4'), mention('e', '799')];
+  const items = await runCode('authorize-mention', { input, env: { DISCORD_ALLOWED_AUTHORS: ' \t7 ,42 ,  ' } });
+  assert.deepEqual(items.map(({ json }) => json.id), ['a', 'c']);
 });
 
 const WEBHOOKS = {

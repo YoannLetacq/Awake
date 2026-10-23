@@ -67,7 +67,7 @@ for (const [type, group] of Object.entries(GROUPS)) {
 
   const webhook = String($env[group.env] || '').trim();
   if (!WEBHOOK_URL.test(webhook)) {
-    console.warn(`${group.env} is unset or not a Discord webhook URL: skipping ${articles.length} article(s)`);
+    console.log(`${group.env} is unset or not a Discord webhook URL: skipping ${articles.length} article(s)`);
     continue;
   }
 

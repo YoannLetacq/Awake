@@ -65,14 +65,14 @@ services:
       - N8N_PROTOCOL=http
       - N8N_EDITOR_BASE_URL=http://localhost:5678/
       - N8N_RUNNERS_MODE=internal
+      # Code node console.log reaches the container logs only with this flag (n8n task runner).
+      - CODE_ENABLE_STDOUT=true
       - TZ=${TZ:-Europe/Paris}
       - GENERIC_TIMEZONE=${TZ:-Europe/Paris}
       # Code nodes and expressions need $env access (Authorize Mention, Format Embeds, Gemini Score).
-      # N8N_ENV_VARS whitelist below restricts which vars are exposed.
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
       - N8N_API_KEY=${N8N_API_KEY}
       - N8N_RESTRICT_FILE_ACCESS_TO=/home/node/rss_sources.json
-      - N8N_ENV_VARS=DISCORD_WEBHOOK_TECH_NEWS,DISCORD_WEBHOOK_COMPANIES,DISCORD_WEBHOOK_REDDIT,DISCORD_WEBHOOK_OTHERS,DISCORD_BOT_TOKEN,DISCORD_ALLOWED_AUTHORS,GEMINI_API_KEY,GEMINI_MODEL,POSTGRES_USER,POSTGRES_PASSWORD,POSTGRES_DB,WEBHOOK_URL,N8N_API_KEY
     ports:
       - "127.0.0.1:${N8N_PORT:-5678}:5678"
     dns:

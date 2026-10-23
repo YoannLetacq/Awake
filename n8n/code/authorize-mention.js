@@ -6,7 +6,7 @@ const allowed = String($env.DISCORD_ALLOWED_AUTHORS || '')
   .filter(Boolean);
 
 if (allowed.length === 0) {
-  console.warn('DISCORD_ALLOWED_AUTHORS is empty: all mentions are ignored');
+  console.log('DISCORD_ALLOWED_AUTHORS is empty: all mentions are ignored');
   return [];
 }
 
